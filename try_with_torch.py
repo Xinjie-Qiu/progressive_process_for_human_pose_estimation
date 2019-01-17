@@ -5,6 +5,7 @@ from PIL import Image, ImageDraw
 import os
 import scipy.io
 import numpy as np
+import torchvision
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 
@@ -16,27 +17,35 @@ nModules = 2
 nFeats = 256
 nStack = 4
 nOutChannels = 14
-
+epochs = 1000
 batch_size = 16
+
+mode = 'test'
+save_model_name = 'params_3.pkl'
+
+train_set = 'train_set.txt'
+eval_set = 'eval_set.txt'
+
+rootdir = '/data/lsp_dataset/images/'
 
 
 class myImageDataset(data.Dataset):
-    def __init__(self, filepath, matdir, transform=None, dim=(256, 256), n_channels=3,
+    def __init__(self, filename, matdir, transform=None, dim=(256, 256), n_channels=3,
                  n_joints=14):
         'Initialization'
         self.mat = scipy.io.loadmat(matdir)
         self.dim = dim
-        self.filepath = filepath
-        self.list = os.listdir(filepath)
+        file = open(filename)
+        self.list = file.readlines()
         self.n_channels = n_channels
         self.n_joints = n_joints
         self.transform = transform
 
     def __len__(self):
-        return 2000
+        return len(self.list)
 
     def __getitem__(self, index):
-        image = Image.open(self.filepath + self.list[index]).convert('RGB')
+        image = Image.open((rootdir + self.list[index]).strip()).convert('RGB')
         w, h = image.size
         image = image.resize([256, 256])
         if self.transform is not None:
@@ -253,23 +262,26 @@ def main():
     model.cuda()
     pckh = PCKh()
     pckh.cuda()
-    rootdir = '/data/lsp_dataset/images/'
     jointsdir = '/data/lsp_dataset/joints.mat'
-    dataset = myImageDataset(rootdir, jointsdir)
+    # dataset = myImageDataset(rootdir, jointsdir)
     # x_, y_ = dataset.__getitem__(0)
+    loss_array = []
+    accuracy_array = []
     mytransform = transforms.Compose([
-        transforms.ToTensor()
-    ]
-    )
-    imgLoader = data.DataLoader(myImageDataset(rootdir, jointsdir, transform=mytransform), batch_size=batch_size,
+        transforms.ToTensor(),
+        transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
+    ])
+    imgLoader_train = data.DataLoader(myImageDataset(train_set, jointsdir, transform=mytransform), batch_size=batch_size,
                                 shuffle=True,
-                                num_workers=4)
-    opt = torch.optim.Adam(model.parameters(), lr=1e-4)
-    mode = 'test'
+                                num_workers=8)
+    imgLoader_eval = data.DataLoader(myImageDataset(eval_set, jointsdir, transform=mytransform),
+                                      batch_size=batch_size,
+                                      shuffle=True,
+                                      num_workers=8)
+    opt = torch.optim.RMSprop(model.parameters(), lr=1e-4)
     if mode == 'train':
-        epochs = 1000
         for epoch in range(epochs):
-            for i, [x_, y] in enumerate(imgLoader, 0):
+            for i, [x_, y] in enumerate(imgLoader_train, 0):
                 bx_, by = x_.cuda(), y.cuda()
                 result = model(bx_)
                 loss_1 = loss1.forward(result[0], by)
@@ -280,20 +292,34 @@ def main():
                 opt.zero_grad()
                 losses.backward()
                 opt.step()
+            with torch.no_grad():
+                dataiter = iter(imgLoader_eval)
+                x_, y = dataiter.next()
+                bx_, by = x_.cuda(), y.cuda()
+                result = model(bx_)
                 accuracy = pckh(result[3], by)
-            print(str(epoch) + ' ' + str(accuracy) + str(losses.data) + str(loss_1.data) + str(loss_2.data) + str(loss_3.data) + str(
-                loss_4.data))
-            torch.save(model.state_dict(), 'params.pkl')
+                print(str(epoch) + ' ' + str(accuracy) + str(losses.data) + str(loss_1.data) + str(loss_2.data) + str(
+                    loss_3.data) + str(
+                    loss_4.data))
+                loss_array.append(loss_4.cpu().data.numpy())
+                accuracy_array.append(accuracy)
+                torch.save(model.state_dict(), save_model_name)
+        x = np.linspace(0, epochs-1, epochs)
+        plt.plot(x, loss_array)
+        plt.savefig('loss.png')
+        plt.plot(x, accuracy_array)
+        plt.savefig('accuracy.png')
+        plt.show()
     elif mode == 'test':
-        model.load_state_dict(torch.load('params.pkl'))
-        dataiter = iter(imgLoader)
-        image, label = dataiter.next()
-        result = model.forward(image.cuda())
-        accuracy = pckh(result[3], label.cuda())
-        print(accuracy)
+        model.load_state_dict(torch.load(save_model_name))
+        image = Image.open('/data/lsp_dataset/images/im1112.jpg').resize([256, 256])
+        image_normalize = (mytransform(image)).unsqueeze(0)
+        result = model.forward(image_normalize.cuda())
+        # accuracy = pckh(result[3], label.cuda())
+        # print(accuracy)
         result = result[3].cpu().data.numpy()
-        image = (image.cpu().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
-        image = Image.fromarray(image)
+        # image = (image.cpu().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
+        # image = Image.fromarray(image)
         draw = ImageDraw.Draw(image)
         for i in range(14):
             x = result[0, i, :, :]
