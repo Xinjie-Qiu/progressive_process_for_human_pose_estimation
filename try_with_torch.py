@@ -20,8 +20,8 @@ nOutChannels = 14
 epochs = 1000
 batch_size = 16
 
-mode = 'test'
-save_model_name = 'params_3.pkl'
+mode = 'train'
+save_model_name = 'params_5.pkl'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -69,7 +69,7 @@ class myImageDataset(data.Dataset):
 
             temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
 
-            Gauss_map[k, :, :] = 1 / (2 * np.pi * sigma ** 2) * np.exp(-temp)
+            Gauss_map[k, :, :] = np.exp(-temp)
 
         return image, torch.Tensor(Gauss_map)
 
@@ -312,7 +312,7 @@ def main():
         plt.show()
     elif mode == 'test':
         model.load_state_dict(torch.load(save_model_name))
-        image = Image.open('/data/lsp_dataset/images/im1112.jpg').resize([256, 256])
+        image = Image.open(rootdir + 'im0401.jpg').resize([256, 256])
         image_normalize = (mytransform(image)).unsqueeze(0)
         result = model.forward(image_normalize.cuda())
         # accuracy = pckh(result[3], label.cuda())
@@ -322,12 +322,16 @@ def main():
         # image = Image.fromarray(image)
         draw = ImageDraw.Draw(image)
         for i in range(14):
+            plt.subplot(3, 7, i + 1)
+            plt.imshow(result[0, i, :, :])
+        for i in range(14):
             x = result[0, i, :, :]
             ys, xs = np.multiply(np.where(x == np.max(x)), 4)
             width = 5
             draw.ellipse([xs - width, ys - width, xs + width, ys + width], fill=(0, 255, 0), outline=(255, 0, 0))
 
         del draw
+        plt.subplot(3, 1, 3)
         plt.imshow(image)
         plt.show()
 
