@@ -8,6 +8,7 @@ import numpy as np
 import torchvision
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
+import json
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
@@ -16,17 +17,72 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 nModules = 2
 nFeats = 256
 nStack = 4
-nOutChannels = 14
-epochs = 1000
+nOutChannels = 17
+epochs = 100
 batch_size = 16
+keypoints = 17
 
 mode = 'train'
-save_model_name = 'params_5.pkl'
+save_model_name = 'params_1_coco.pkl'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
+train_set_coco = '/data/COCO2014/annotations/person_keypoints_train2014.json'
+eval_set_coco = '/data/COCO2014/annotations/person_keypoints_val2014.json'
+train_image_dir_coco = '/data/COCO2014/train2014/COCO_train2014_'
+eval_image_dir_coco = '/data/COCO2014/val2014/COCO_val2014_'
 
 rootdir = '/data/lsp_dataset/images/'
+
+
+class myImageDataset_COCO(data.Dataset):
+    def __init__(self, filename, image_dir, transform=None, dim=(256, 256), n_channels=3,
+                 n_joints=keypoints):
+        'Initialization'
+        with open(filename) as f:
+            datas = json.load(f)
+        self.lists = datas['annotations']
+        self.dim = dim
+        file = open(filename)
+        self.n_channels = n_channels
+        self.n_joints = n_joints
+        self.transform = transform
+        self.image_dir = image_dir
+
+    def __len__(self):
+        return 1000
+
+    def __getitem__(self, index):
+        data = self.lists[index]
+        image_name = self.image_dir + '%012d.jpg' % data['image_id']
+        image = Image.open(image_name)
+        image = image.convert('RGB')
+        w, h = image.size
+        image = image.resize([256, 256])
+        if self.transform is not None:
+            image = self.transform(image)
+        Gauss_map = np.zeros([keypoints, 64, 64])
+        for k in range(keypoints):
+            if data['keypoints'][k * 3 + 2] > 0:
+                xs = data['keypoints'][k * 3] / w * 64
+                ys = data['keypoints'][k * 3 + 1] / h * 64
+
+                sigma = 1
+                mask_x = np.matlib.repmat(xs, 64, 64)
+                mask_y = np.matlib.repmat(ys, 64, 64)
+
+                x1 = np.arange(64)
+                x_map = np.matlib.repmat(x1, 64, 1)
+
+                y1 = np.arange(64)
+                y_map = np.matlib.repmat(y1, 64, 1)
+                y_map = np.transpose(y_map)
+
+                temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
+
+                Gauss_map[k, :, :] = np.exp(-temp)
+
+        return image, torch.Tensor(Gauss_map)
 
 
 class myImageDataset(data.Dataset):
@@ -241,6 +297,8 @@ class PCKh(nn.Module):
             standard = torch.sqrt((torch.pow(head_ys - neck_ys, 2) + torch.pow(head_xs - neck_xs, 2)).float()) / 2
             for j in range(14):
                 label_heat_map = target[i, j, :, :]
+                if torch.max(label_heat_map) == 0:
+                    continue
                 label_ys = torch.max(torch.max(label_heat_map, 1)[0], 0)[1]
                 label_xs = torch.max(label_heat_map, 1)[1][head_ys]
                 predict_heat_map = x[i, j, :, :]
@@ -271,17 +329,21 @@ def main():
         transforms.ToTensor(),
         transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
     ])
-    imgLoader_train = data.DataLoader(myImageDataset(train_set, jointsdir, transform=mytransform), batch_size=batch_size,
-                                shuffle=True,
-                                num_workers=8)
-    imgLoader_eval = data.DataLoader(myImageDataset(eval_set, jointsdir, transform=mytransform),
-                                      batch_size=batch_size,
-                                      shuffle=True,
-                                      num_workers=8)
+    # imgLoader_train = data.DataLoader(myImageDataset(train_set, jointsdir, transform=mytransform), batch_size=batch_size,
+    #                             shuffle=True,
+    #                             num_workers=8)
+    # imgLoader_eval = data.DataLoader(myImageDataset(eval_set, jointsdir, transform=mytransform),
+    #                                   batch_size=batch_size,
+    #                                   shuffle=True,
+    #                                   num_workers=8)
+
+    imgLoader_train_coco = data.DataLoader(myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size, shuffle=True, num_workers=8)
+    imgLoader_eval_coco = data.DataLoader(myImageDataset_COCO(eval_set_coco, eval_image_dir_coco, transform=mytransform), batch_size=batch_size, shuffle=True, num_workers=4)
+
     opt = torch.optim.RMSprop(model.parameters(), lr=1e-4)
     if mode == 'train':
         for epoch in range(epochs):
-            for i, [x_, y] in enumerate(imgLoader_train, 0):
+            for i, [x_, y] in enumerate(imgLoader_train_coco, 0):
                 bx_, by = x_.cuda(), y.cuda()
                 result = model(bx_)
                 loss_1 = loss1.forward(result[0], by)
@@ -293,7 +355,7 @@ def main():
                 losses.backward()
                 opt.step()
             with torch.no_grad():
-                dataiter = iter(imgLoader_eval)
+                dataiter = iter(imgLoader_eval_coco)
                 x_, y = dataiter.next()
                 bx_, by = x_.cuda(), y.cuda()
                 result = model(bx_)
@@ -314,7 +376,7 @@ def main():
         model.load_state_dict(torch.load(save_model_name))
         image = Image.open(rootdir + 'im0401.jpg').resize([256, 256])
         image_normalize = (mytransform(image)).unsqueeze(0)
-        result = model.forward(image_normalize.cuda())
+        result = model.forward(image_normalize)
         # accuracy = pckh(result[3], label.cuda())
         # print(accuracy)
         result = result[3].cpu().data.numpy()
