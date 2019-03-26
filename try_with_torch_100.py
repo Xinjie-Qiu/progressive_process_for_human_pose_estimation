@@ -9,102 +9,80 @@ import torchvision
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import json
-from pycocotools.coco import COCO
-from os import path
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 nModules = 2
 nFeats = 256
 nStack = 4
-nOutChannels = 18
+nOutChannels = 17
 epochs = 1000
 batch_size = 16
 keypoints = 17
 
-mode = 'test'
-save_model_name = 'params_3_coco.pkl'
+mode = 'train'
+save_model_name = 'params_2_coco.pkl'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
 train_set_coco = '/data/COCO2014/annotations/person_keypoints_train2014.json'
 eval_set_coco = '/data/COCO2014/annotations/person_keypoints_val2014.json'
-train_image_dir_coco = '/data/COCO2014/train2014'
-eval_image_dir_coco = '/data/COCO2014/val2014'
+train_image_dir_coco = '/data/COCO2014/train2014/COCO_train2014_'
+eval_image_dir_coco = '/data/COCO2014/val2014/COCO_val2014_'
 
 rootdir = '/data/lsp_dataset/images/'
 
 
 class myImageDataset_COCO(data.Dataset):
-    def __init__(self, anno, image_dir, transform=None):
+    def __init__(self, filename, image_dir, transform=None, dim=(256, 256), n_channels=3,
+                 n_joints=keypoints):
         'Initialization'
-        self.anno = COCO(anno)
-        self.image_dir = image_dir
-        self.lists = self.anno.getImgIds(catIds=self.anno.getCatIds())
+        with open(filename) as f:
+            datas = json.load(f)
+        self.lists = datas['annotations']
+        self.dim = dim
+        file = open(filename)
+        self.n_channels = n_channels
+        self.n_joints = n_joints
         self.transform = transform
+        self.image_dir = image_dir
 
     def __len__(self):
-        # return len(self.lists)
-        return 1000
+        return len(self.lists)
 
     def __getitem__(self, index):
-        list = self.lists[index]
-        image_name = self.anno.loadImgs(list)[0]['file_name']
-        image_path = path.join(self.image_dir, image_name)
-        image = Image.open(image_path)
+        data = self.lists[index]
+        image_name = self.image_dir + '%012d.jpg' % data['image_id']
+        image = Image.open(image_name)
         image = image.convert('RGB')
         w, h = image.size
         image = image.resize([256, 256])
         if self.transform is not None:
-            image = self.transform(image)
-        label_id = self.anno.getAnnIds(list)
-        labels = self.anno.loadAnns(label_id)
-        Gauss_map = np.zeros([64, 64])
-        for label in labels:
-            sks = np.array(self.anno.loadCats(label['category_id'])[0]['skeleton']) - 1
-            kp = np.array(label['keypoints'])
-            x = np.array(kp[0::3] / w * 64).astype(np.int)
-            y = np.array(kp[1::3] / h * 64).astype(np.int)
-            v = kp[2::3]
-            for k in range(keypoints):
-                if v[k] > 0:
-                    Gauss_map[x[k], y[k]] = k + 1
+            image_after_transform = self.transform(image)
+        Gauss_map = np.zeros([keypoints, 64, 64])
+        for k in range(keypoints):
+            if data['keypoints'][k * 3 + 2] > 0:
+                xs = data['keypoints'][k * 3] / w * 64
+                ys = data['keypoints'][k * 3 + 1] / h * 64
 
-        # data = self.lists[index]
-        # image_name = self.image_dir + '%012d.jpg' % data['image_id']
-        # image = Image.open(image_name)
-        # image = image.convert('RGB')
-        # w, h = image.size
-        # image = image.resize([256, 256])
-        # if self.transform is not None:
-        #     image = self.transform(image)
-        # Gauss_map = np.zeros([64, 64])
-        # for k in range(keypoints):
-        #     if data['keypoints'][k * 3 + 2] > 0:
-        #         xs = data['keypoints'][k * 3] / w * 64
-        #         ys = data['keypoints'][k * 3 + 1] / h * 64
-        #
-        #         Gauss_map[int(xs), int(ys)] = k
-        #
-                # sigma = 1
-                # mask_x = np.matlib.repmat(xs, 64, 64)
-                # mask_y = np.matlib.repmat(ys, 64, 64)
-                #
-                # x1 = np.arange(64)
-                # x_map = np.matlib.repmat(x1, 64, 1)
-                #
-                # y1 = np.arange(64)
-                # y_map = np.matlib.repmat(y1, 64, 1)
-                # y_map = np.transpose(y_map)
-                #
-                # temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
-                #
-                # Gauss_map[k, :, :] = np.exp(-temp)
-        # if(Gauss_map.max()==0):
-        #     print('sdf')
-        return image, torch.Tensor(Gauss_map).long()
+                sigma = 1
+                mask_x = np.matlib.repmat(xs, 64, 64)
+                mask_y = np.matlib.repmat(ys, 64, 64)
+
+                x1 = np.arange(64)
+                x_map = np.matlib.repmat(x1, 64, 1)
+
+                y1 = np.arange(64)
+                y_map = np.matlib.repmat(y1, 64, 1)
+                y_map = np.transpose(y_map)
+
+                temp = 100 * ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
+
+                Gauss_map[k, :, :] = np.exp(-temp)
+
+        return image_after_transform, torch.Tensor(Gauss_map)
 
 
 class myImageDataset(data.Dataset):
@@ -214,7 +192,6 @@ class hourglass(nn.Module):
         up2 = nn.functional.interpolate(low3, scale_factor=2, mode='bilinear', align_corners=True)
         out = up1 + up2
         return out
-
 
 
 class lin(nn.Module):
@@ -335,19 +312,14 @@ class PCKh(nn.Module):
 
 
 def main():
-    # loss1 = nn.MSELoss().cuda()
-    # loss2 = nn.MSELoss().cuda()
-    # loss3 = nn.MSELoss().cuda()
-    # loss4 = nn.MSELoss().cuda()
-    loss1 = nn.CrossEntropyLoss().cuda()
-    loss2 = nn.CrossEntropyLoss().cuda()
-    loss3 = nn.CrossEntropyLoss().cuda()
-    loss4 = nn.CrossEntropyLoss().cuda()
-
+    loss1 = nn.MSELoss()
+    loss2 = nn.MSELoss()
+    loss3 = nn.MSELoss()
+    loss4 = nn.MSELoss()
     model = creatModel()
     model.cuda()
-    # pckh = PCKh()
-
+    pckh = PCKh()
+    pckh.cuda()
     jointsdir = '/data/lsp_dataset/joints.mat'
     # dataset = myImageDataset(rootdir, jointsdir)
     # x_, y_ = dataset.__getitem__(0)
@@ -365,10 +337,8 @@ def main():
     #                                   shuffle=True,
     #                                   num_workers=8)
 
-    # test = myImageDataset_COCO(train_set_coco, train_image_dir_coco)
-    # x, y = test.__getitem__(0)
-    imgLoader_train_coco = data.DataLoader(myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size, shuffle=True, num_workers=8)
-    imgLoader_eval_coco = data.DataLoader(myImageDataset_COCO(eval_set_coco, eval_image_dir_coco, transform=mytransform), batch_size=batch_size, shuffle=True, num_workers=4)
+    imgLoader_train_coco = data.DataLoader(myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size, shuffle=True, num_workers=1)
+    imgLoader_eval_coco = data.DataLoader(myImageDataset_COCO(eval_set_coco, eval_image_dir_coco, transform=mytransform), batch_size=batch_size, shuffle=True, num_workers=1)
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-4)
     if mode == 'train':
@@ -385,27 +355,27 @@ def main():
                 losses.backward()
                 opt.step()
             with torch.no_grad():
-                # dataiter = iter(imgLoader_eval_coco)
-                # x_, y = dataiter.next()
-                # bx_, by = x_.cuda(), y.cuda()
-                # result = model(bx_)
-                # accuracy = pckh(result[3], by)
-                print(str(epoch) + ' ' + str(losses.data) + str(loss_1.data) + str(loss_2.data) + str(
+                dataiter = iter(imgLoader_eval_coco)
+                x_, y = dataiter.next()
+                bx_, by = x_.cuda(), y.cuda()
+                result = model(bx_)
+                accuracy = pckh(result[3], by)
+                print(str(epoch) + ' ' + str(accuracy) + str(losses.data) + str(loss_1.data) + str(loss_2.data) + str(
                     loss_3.data) + str(
                     loss_4.data))
                 loss_array.append(loss_4.cpu().data.numpy())
-                # accuracy_array.append(accuracy)
+                accuracy_array.append(accuracy)
                 torch.save(model.state_dict(), save_model_name)
         x = np.linspace(0, epochs-1, epochs)
         plt.plot(x, loss_array)
         plt.savefig('loss.png')
-        # plt.plot(x, accuracy_array)
-        # plt.savefig('accuracy.png')
+        plt.plot(x, accuracy_array)
+        plt.savefig('accuracy.png')
         plt.show()
     elif mode == 'test':
         model.load_state_dict(torch.load(save_model_name))
-        image = Image.open('test_img/images_3.jpeg').resize([256, 256])
-        image_normalize = (mytransform(image)).unsqueeze(0).cuda()
+        image = Image.open(rootdir + 'im0401.jpg').resize([256, 256])
+        image_normalize = (mytransform(image)).unsqueeze(0)
         result = model.forward(image_normalize)
         # accuracy = pckh(result[3], label.cuda())
         # print(accuracy)
@@ -416,11 +386,11 @@ def main():
         for i in range(14):
             plt.subplot(3, 7, i + 1)
             plt.imshow(result[0, i, :, :])
-        for i in range(14):
-            x = result[0, i, :, :]
-            ys, xs = np.multiply(np.where(x == np.max(x)), 4)
-            width = 5
-            draw.ellipse([xs - width, ys - width, xs + width, ys + width], fill=(0, 255, 0), outline=(255, 0, 0))
+        # for i in range(14):
+        #     x = result[0, i, :, :]
+        #     ys, xs = np.multiply(np.where(x == np.max(x)), 4)
+        #     width = 5
+        #     draw.ellipse([xs - width, ys - width, xs + width, ys + width], fill=(0, 255, 0), outline=(255, 0, 0))
 
         del draw
         plt.subplot(3, 1, 3)
