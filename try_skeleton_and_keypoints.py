@@ -19,13 +19,16 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 nModules = 2
 nFeats = 256
 nStack = 4
-nOutChannels = 18
+nKeypoint = 17
+nSkeleton = 19
+nOutChannels = nKeypoint + nSkeleton + 2
 epochs = 1000
 batch_size = 16
 keypoints = 17
+skeleton = 20
 
-mode = 'test'
-save_model_name = 'params_3_coco.pkl'
+mode = 'train'
+save_model_name = 'params_1_coco_skeleton_and_keypoints.pkl'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -34,7 +37,11 @@ eval_set_coco = '/data/COCO2014/annotations/person_keypoints_val2014.json'
 train_image_dir_coco = '/data/COCO2014/train2014'
 eval_image_dir_coco = '/data/COCO2014/val2014'
 
+loss_img = save_model_name[:-4] + 'loss.png'
+accuracy_img = save_model_name[:-4] + 'accuracy.png'
+
 rootdir = '/data/lsp_dataset/images/'
+retrain = False
 
 
 class myImageDataset_COCO(data.Dataset):
@@ -46,8 +53,8 @@ class myImageDataset_COCO(data.Dataset):
         self.transform = transform
 
     def __len__(self):
-        # return len(self.lists)
-        return 1000
+        return len(self.lists)
+        # return 1000
 
     def __getitem__(self, index):
         list = self.lists[index]
@@ -61,7 +68,12 @@ class myImageDataset_COCO(data.Dataset):
             image = self.transform(image)
         label_id = self.anno.getAnnIds(list)
         labels = self.anno.loadAnns(label_id)
-        Gauss_map = np.zeros([64, 64])
+        Label_map_keypoints = np.zeros([64, 64])
+        Label_map_keypoints = Image.fromarray(Label_map_keypoints, 'L')
+        draw_keypoints = ImageDraw.Draw(Label_map_keypoints)
+        Label_map_skeleton = np.zeros([64, 64])
+        Label_map_skeleton = Image.fromarray(Label_map_skeleton, 'L')
+        draw_skeleton = ImageDraw.Draw(Label_map_skeleton)
         for label in labels:
             sks = np.array(self.anno.loadCats(label['category_id'])[0]['skeleton']) - 1
             kp = np.array(label['keypoints'])
@@ -70,41 +82,14 @@ class myImageDataset_COCO(data.Dataset):
             v = kp[2::3]
             for k in range(keypoints):
                 if v[k] > 0:
-                    Gauss_map[x[k], y[k]] = k + 1
-
-        # data = self.lists[index]
-        # image_name = self.image_dir + '%012d.jpg' % data['image_id']
-        # image = Image.open(image_name)
-        # image = image.convert('RGB')
-        # w, h = image.size
-        # image = image.resize([256, 256])
-        # if self.transform is not None:
-        #     image = self.transform(image)
-        # Gauss_map = np.zeros([64, 64])
-        # for k in range(keypoints):
-        #     if data['keypoints'][k * 3 + 2] > 0:
-        #         xs = data['keypoints'][k * 3] / w * 64
-        #         ys = data['keypoints'][k * 3 + 1] / h * 64
-        #
-        #         Gauss_map[int(xs), int(ys)] = k
-        #
-                # sigma = 1
-                # mask_x = np.matlib.repmat(xs, 64, 64)
-                # mask_y = np.matlib.repmat(ys, 64, 64)
-                #
-                # x1 = np.arange(64)
-                # x_map = np.matlib.repmat(x1, 64, 1)
-                #
-                # y1 = np.arange(64)
-                # y_map = np.matlib.repmat(y1, 64, 1)
-                # y_map = np.transpose(y_map)
-                #
-                # temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
-                #
-                # Gauss_map[k, :, :] = np.exp(-temp)
-        # if(Gauss_map.max()==0):
-        #     print('sdf')
-        return image, torch.Tensor(Gauss_map).long()
+                    draw_keypoints.point(np.array([x[k], y[k]]).tolist(), 'rgb({}, {}, {})'.format(k + 1, k + 1, k + 1))
+            for i, sk in enumerate(sks):
+                if np.all(v[sk] > 0):
+                    draw_skeleton.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
+                                       'rgb({}, {}, {})'.format(i + 1, i + 1, i + 1))
+        del draw_keypoints, draw_skeleton
+        return image, torch.Tensor(np.array(Label_map_keypoints)).long(), torch.Tensor(
+            np.array(Label_map_skeleton)).long()
 
 
 class myImageDataset(data.Dataset):
@@ -214,7 +199,6 @@ class hourglass(nn.Module):
         up2 = nn.functional.interpolate(low3, scale_factor=2, mode='bilinear', align_corners=True)
         out = up1 + up2
         return out
-
 
 
 class lin(nn.Module):
@@ -339,24 +323,13 @@ def main():
     # loss2 = nn.MSELoss().cuda()
     # loss3 = nn.MSELoss().cuda()
     # loss4 = nn.MSELoss().cuda()
-    loss1 = nn.CrossEntropyLoss().cuda()
-    loss2 = nn.CrossEntropyLoss().cuda()
-    loss3 = nn.CrossEntropyLoss().cuda()
-    loss4 = nn.CrossEntropyLoss().cuda()
 
     model = creatModel()
     model.cuda()
     # pckh = PCKh()
-
-    jointsdir = '/data/lsp_dataset/joints.mat'
     # dataset = myImageDataset(rootdir, jointsdir)
     # x_, y_ = dataset.__getitem__(0)
-    loss_array = []
-    accuracy_array = []
-    mytransform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
-    ])
+
     # imgLoader_train = data.DataLoader(myImageDataset(train_set, jointsdir, transform=mytransform), batch_size=batch_size,
     #                             shuffle=True,
     #                             num_workers=8)
@@ -367,19 +340,52 @@ def main():
 
     # test = myImageDataset_COCO(train_set_coco, train_image_dir_coco)
     # x, y = test.__getitem__(0)
-    imgLoader_train_coco = data.DataLoader(myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size, shuffle=True, num_workers=8)
-    imgLoader_eval_coco = data.DataLoader(myImageDataset_COCO(eval_set_coco, eval_image_dir_coco, transform=mytransform), batch_size=batch_size, shuffle=True, num_workers=4)
-
+    mytransform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
+    ])
     opt = torch.optim.Adam(model.parameters(), lr=1e-4)
     if mode == 'train':
-        for epoch in range(epochs):
-            for i, [x_, y] in enumerate(imgLoader_train_coco, 0):
-                bx_, by = x_.cuda(), y.cuda()
+        loss1_keypoints = nn.CrossEntropyLoss().cuda()
+        loss1_skeleton = nn.CrossEntropyLoss().cuda()
+        loss2_keypoints = nn.CrossEntropyLoss().cuda()
+        loss2_skeleton = nn.CrossEntropyLoss().cuda()
+        loss3_keypoints = nn.CrossEntropyLoss().cuda()
+        loss3_skeleton = nn.CrossEntropyLoss().cuda()
+        loss4_keypoints = nn.CrossEntropyLoss().cuda()
+        loss4_skeleton = nn.CrossEntropyLoss().cuda()
+        loss_array = []
+        accuracy_array = []
+        mytransform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
+        ])
+        imgLoader_train_coco = data.DataLoader(
+            myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size,
+            shuffle=True, num_workers=4)
+        # imgLoader_eval_coco = data.DataLoader(
+        #     myImageDataset_COCO(eval_set_coco, eval_image_dir_coco, transform=mytransform), batch_size=batch_size,
+        #     shuffle=True, num_workers=4)
+        if retrain or not os.path.isfile(save_model_name):
+            epoch = 0
+        else:
+            state = torch.load(save_model_name)
+            model.load_state_dict(state['state_dict'])
+            opt.load_state_dict(state['optimizer'])
+            epoch = state['epoch']
+            loss_array = state['loss']
+        while epoch <= epochs:
+            for i, [x_, y_keypoints, y_skeleton] in enumerate(imgLoader_train_coco, 0):
+                bx_, by_keypoints, by_skeleton = x_.cuda(), y_keypoints.cuda(), y_skeleton.cuda()
                 result = model(bx_)
-                loss_1 = loss1.forward(result[0], by)
-                loss_2 = loss2.forward(result[1], by)
-                loss_3 = loss3.forward(result[2], by)
-                loss_4 = loss4.forward(result[3], by)
+                loss_1 = loss1_keypoints.forward(result[0][:, :18, :, :], by_keypoints) + loss1_skeleton.forward(
+                    result[0][:, 18:, :, :], by_skeleton)
+                loss_2 = loss2_keypoints.forward(result[1][:, :18, :, :], by_keypoints) + loss2_skeleton.forward(
+                    result[1][:, 18:, :, :], by_skeleton)
+                loss_3 = loss3_keypoints.forward(result[2][:, :18, :, :], by_keypoints) + loss3_skeleton.forward(
+                    result[2][:, 18:, :, :], by_skeleton)
+                loss_4 = loss4_keypoints.forward(result[3][:, :18, :, :], by_keypoints) + loss4_skeleton.forward(
+                    result[3][:, 18:, :, :], by_skeleton)
                 losses = loss_1 + loss_2 + loss_3 + loss_4
                 opt.zero_grad()
                 losses.backward()
@@ -390,21 +396,29 @@ def main():
                 # bx_, by = x_.cuda(), y.cuda()
                 # result = model(bx_)
                 # accuracy = pckh(result[3], by)
-                print(str(epoch) + ' ' + str(losses.data) + str(loss_1.data) + str(loss_2.data) + str(
-                    loss_3.data) + str(
-                    loss_4.data))
+                print(str(epoch) + ' ' + str(losses.cpu().data.numpy()) + ' ' + str(
+                    loss_1.cpu().data.numpy()) + ' ' + str(
+                    loss_2.cpu().data.numpy()) + ' ' + str(
+                    loss_3.cpu().data.numpy()) + ' ' + str(
+                    loss_4.cpu().data.numpy()))
                 loss_array.append(loss_4.cpu().data.numpy())
                 # accuracy_array.append(accuracy)
-                torch.save(model.state_dict(), save_model_name)
-        x = np.linspace(0, epochs-1, epochs)
-        plt.plot(x, loss_array)
-        plt.savefig('loss.png')
-        # plt.plot(x, accuracy_array)
-        # plt.savefig('accuracy.png')
-        plt.show()
+                x = np.linspace(0, epoch, epoch + 1)
+                plt.plot(x, loss_array)
+                plt.savefig(loss_img)
+                # accuracy_array.append(accuracy)
+                epoch += 1
+                state = {
+                    'epoch': epoch,
+                    'state_dict': model.state_dict(),
+                    'optimizer': opt.state_dict(),
+                    'loss': loss_array
+                }
+                torch.save(state, save_model_name)
+
     elif mode == 'test':
         model.load_state_dict(torch.load(save_model_name))
-        image = Image.open('test_img/images_3.jpeg').resize([256, 256])
+        image = Image.open('test_img/index_0.jpeg').resize([256, 256])
         image_normalize = (mytransform(image)).unsqueeze(0).cuda()
         result = model.forward(image_normalize)
         # accuracy = pckh(result[3], label.cuda())
