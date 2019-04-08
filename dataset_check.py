@@ -29,12 +29,13 @@ save_model_name = 'params_3_coco.pkl'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
-train_set_coco = '/data/COCO2014/annotations/person_keypoints_train2014.json'
-eval_set_coco = '/data/COCO2014/annotations/person_keypoints_val2014.json'
-train_image_dir_coco = '/data/COCO2014/train2014'
-eval_image_dir_coco = '/data/COCO2014/val2014'
+train_set_coco = '/data/COCO/COCO2017/annotations_trainval2017/annotations/person_keypoints_train2017.json'
+eval_set_coco = '/data/COCO/COCO2017/annotations_trainval2017/annotations/person_keypoints_val2017.json'
 
-rootdir = '/data/lsp_dataset/images/'
+train_image_dir_coco = '/data/COCO/COCO2017/train2017'
+eval_image_dir_coco = '/data/COCO/COCO2017/val2017'
+
+# rootdir = '/data/lsp_dataset/images/'
 
 
 class myImageDataset_COCO(data.Dataset):
@@ -58,46 +59,30 @@ class myImageDataset_COCO(data.Dataset):
         w, h = image.size
         image = image.resize([256, 256])
         if self.transform is not None:
-            image = self.transform(image)
+            image_after_transform = self.transform(image)
         label_id = self.anno.getAnnIds(list)
         labels = self.anno.loadAnns(label_id)
-        Label_map_keypoints = np.zeros([64, 64])
-        Label_map_keypoints = Image.fromarray(Label_map_keypoints, 'L')
-        draw_keypoints = ImageDraw.Draw(Label_map_keypoints)
-        Label_map_skeleton = np.zeros([64, 64])
-        Label_map_skeleton = Image.fromarray(Label_map_skeleton, 'L')
-        draw_skeleton = ImageDraw.Draw(Label_map_skeleton)
+        Label_map = np.zeros([64, 64])
+        Label_map = Image.fromarray(Label_map, 'L')
+        draw = ImageDraw.Draw(Label_map)
         for label in labels:
             sks = np.array(self.anno.loadCats(label['category_id'])[0]['skeleton']) - 1
             kp = np.array(label['keypoints'])
             x = np.array(kp[0::3] / w * 64).astype(np.int)
             y = np.array(kp[1::3] / h * 64).astype(np.int)
             v = kp[2::3]
-            for k in range(keypoints):
-                if v[k] > 0:
-                    draw_keypoints.point(np.array([x[k], y[k]]).tolist(), 'rgb({}, {}, {})'.format(k + 1, k + 1, k + 1))
             for i, sk in enumerate(sks):
                 if np.all(v[sk] > 0):
-                    draw_skeleton.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
-                                       'rgb({}, {}, {})'.format(i + 1, i + 1, i + 1))
-        del draw_keypoints, draw_skeleton
-        # for label in labels:
-        #     sks = np.array(self.anno.loadCats(label['category_id'])[0]['skeleton']) - 1
-        #     kp = np.array(label['keypoints'])
-        #     x = np.array(kp[0::3] / w * 64).astype(np.int)
-        #     y = np.array(kp[1::3] / h * 64).astype(np.int)
-        #     v = kp[2::3]
-        #     for k in range(keypoints):
-        #         if v[k] > 0:
-        #             draw.point(np.array([x[k], y[k]]).tolist(), 'rgb({}, {}, {})'.format(k + 1, k + 1, k + 1))
-        # del draw
+                    draw.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
+                              'rgb({}, {}, {})'.format(i + 1, i + 1, i + 1))
+
+        del draw
         plt.subplot(1, 2, 1)
         plt.imshow(image)
         plt.subplot(1, 2, 2)
-        plt.imshow(np.array(Label_map_skeleton.resize([256, 256])))
+        plt.imshow(np.array(Label_map))
         plt.show()
-        return image, torch.Tensor(np.array(Label_map_keypoints)).long(), torch.Tensor(
-            np.array(Label_map_skeleton)).long()
+        return image_after_transform, torch.Tensor(np.array(Label_map)).long()
 
 def main():
     mytransform = transforms.Compose([
@@ -105,12 +90,10 @@ def main():
         transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
     ])
 
-    test = myImageDataset_COCO(train_set_coco, train_image_dir_coco)
-    x, y = test.__getitem__(5)
-    # imgLoader_train_coco = data.DataLoader(myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size, shuffle=True, num_workers=8)
-    plt.imshow(x)
-    plt.imshow(y.resize([256, 256]))
-    plt.show()
+    # test = myImageDataset_COCO(train_set_coco, train_image_dir_coco)
+    test_loader = data.DataLoader(myImageDataset_COCO(train_set_coco, train_image_dir_coco, mytransform), 1, True, num_workers=1)
+    for step, [x, y] in enumerate(test_loader, 0):
+        print('efds')
     print('yyy')
 
 

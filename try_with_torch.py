@@ -368,7 +368,7 @@ def main():
     # test = myImageDataset_COCO(train_set_coco, train_image_dir_coco)
     # x, y = test.__getitem__(0)
     imgLoader_train_coco = data.DataLoader(myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size, shuffle=True, num_workers=8)
-    imgLoader_eval_coco = data.DataLoader(myImageDataset_COCO(eval_set_coco, eval_image_dir_coco, transform=mytransform), batch_size=batch_size, shuffle=True, num_workers=4)
+    # imgLoader_eval_coco = data.DataLoader(myImageDataset_COCO(eval_set_coco, eval_image_dir_coco, transform=mytransform), batch_size=batch_size, shuffle=True, num_workers=4)
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-4)
     if mode == 'train':

@@ -5,10 +5,11 @@ from os import path
 import numpy as np
 
 keypoints = 17
-train_set_coco = '/data/COCO2014/annotations/person_keypoints_train2014.json'
-train_image_dir_coco = '/data/COCO2014/train2014/'
+train_set_coco = '/data/COCO/COCO2017/annotations_trainval2017/annotations/person_keypoints_train2017.json'
+train_image_dir_coco = '/data/COCO/COCO2017/train2017/'
 anno = COCO(train_set_coco)
-lists = anno.getImgIds(catIds=anno.getCatIds())
+catIds = anno.getCatIds()
+lists = anno.getImgIds(catIds=catIds)
 for i in lists:
     image_name = anno.loadImgs(i)[0]['file_name']
     image_path = path.join(train_image_dir_coco, image_name)
