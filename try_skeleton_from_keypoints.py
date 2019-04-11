@@ -30,7 +30,7 @@ batch_size = 16
 keypoints = 17
 skeleton = 20
 
-mode = 'train'
+mode = 'test'
 save_model_name = 'params_1_coco_skeleton_from_keypoints.pkl'
 
 train_set = 'train_set.txt'
@@ -464,7 +464,7 @@ def main():
         # image = (image.cpu().float().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
         # image = Image.fromarray(image)
         draw = ImageDraw.Draw(image)
-        for i in range(38):
+        for i in range(37):
             plt.subplot(3, 19, i + 1)
 
             plt.imshow(result[0, i, :, :])

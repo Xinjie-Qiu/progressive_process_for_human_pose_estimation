@@ -59,30 +59,44 @@ class myImageDataset_COCO(data.Dataset):
         w, h = image.size
         image = image.resize([256, 256])
         if self.transform is not None:
-            image_after_transform = self.transform(image)
+            image = self.transform(image)
         label_id = self.anno.getAnnIds(list)
         labels = self.anno.loadAnns(label_id)
-        Label_map = np.zeros([64, 64])
-        Label_map = Image.fromarray(Label_map, 'L')
-        draw = ImageDraw.Draw(Label_map)
+        Label_map_skeleton = np.zeros([64, 64])
+        Label_map_skeleton = Image.fromarray(Label_map_skeleton, 'L')
+        draw_skeleton = ImageDraw.Draw(Label_map_skeleton)
         for label in labels:
             sks = np.array(self.anno.loadCats(label['category_id'])[0]['skeleton']) - 1
             kp = np.array(label['keypoints'])
             x = np.array(kp[0::3] / w * 64).astype(np.int)
             y = np.array(kp[1::3] / h * 64).astype(np.int)
             v = kp[2::3]
+            Gauss_map = np.zeros([17, 64, 64])
+            for k in range(keypoints):
+                if v[k] > 0:
+
+                    sigma = 1
+                    mask_x = np.matlib.repmat(x[k], 64, 64)
+                    mask_y = np.matlib.repmat(y[k], 64, 64)
+
+                    x1 = np.arange(64)
+                    x_map = np.matlib.repmat(x1, 64, 1)
+
+                    y1 = np.arange(64)
+                    y_map = np.matlib.repmat(y1, 64, 1)
+                    y_map = np.transpose(y_map)
+
+                    temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
+
+                    Gauss_map[k, :, :] = np.exp(-temp)
+                    # draw_keypoints.point(np.array([x[k], y[k]]).tolist(), 'rgb({}, {}, {})'.format(k + 1, k + 1, k + 1))
             for i, sk in enumerate(sks):
                 if np.all(v[sk] > 0):
-                    draw.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
-                              'rgb({}, {}, {})'.format(i + 1, i + 1, i + 1))
-
-        del draw
-        plt.subplot(1, 2, 1)
-        plt.imshow(image)
-        plt.subplot(1, 2, 2)
-        plt.imshow(np.array(Label_map))
-        plt.show()
-        return image_after_transform, torch.Tensor(np.array(Label_map)).long()
+                    draw_skeleton.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
+                                       'rgb({}, {}, {})'.format(i, i, i))
+        del draw_skeleton
+        return image, torch.Tensor(np.array(Gauss_map)).long(), torch.Tensor(
+            np.array(Label_map_skeleton)).long()
 
 def main():
     mytransform = transforms.Compose([
@@ -92,7 +106,7 @@ def main():
 
     # test = myImageDataset_COCO(train_set_coco, train_image_dir_coco)
     test_loader = data.DataLoader(myImageDataset_COCO(train_set_coco, train_image_dir_coco, mytransform), 1, True, num_workers=1)
-    for step, [x, y] in enumerate(test_loader, 0):
+    for step, [x, keypoints, skeletion] in enumerate(test_loader, 0):
         print('efds')
     print('yyy')
 

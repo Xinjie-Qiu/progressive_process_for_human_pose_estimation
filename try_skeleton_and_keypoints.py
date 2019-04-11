@@ -472,7 +472,7 @@ def main():
         model.load_state_dict(state['state_dict'])
         epoch = state['epoch']
         loss_array = state['loss']
-        image = Image.open('test_img/im1.jpg').resize([256, 256])
+        image = Image.open('test_img/im10.png').resize([256, 256])
         image_normalize = (mytransform(image)).unsqueeze(0).cuda().half()
         result = model.forward(image_normalize)
         # accuracy = pckh(result[3], label.cuda().half())
