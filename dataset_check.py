@@ -59,7 +59,7 @@ class myImageDataset_COCO(data.Dataset):
         w, h = image.size
         image = image.resize([256, 256])
         if self.transform is not None:
-            image = self.transform(image)
+            image_after = self.transform(image)
         label_id = self.anno.getAnnIds(list)
         labels = self.anno.loadAnns(label_id)
         Label_map_skeleton = np.zeros([64, 64])
@@ -93,9 +93,9 @@ class myImageDataset_COCO(data.Dataset):
             for i, sk in enumerate(sks):
                 if np.all(v[sk] > 0):
                     draw_skeleton.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
-                                       'rgb({}, {}, {})'.format(i, i, i))
+                                       'rgb({}, {}, {})'.format(1, 1, 1))
         del draw_skeleton
-        return image, torch.Tensor(np.array(Gauss_map)).long(), torch.Tensor(
+        return image_after, torch.Tensor(np.array(Gauss_map)).long(), torch.Tensor(
             np.array(Label_map_skeleton)).long()
 
 def main():
