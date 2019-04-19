@@ -293,7 +293,7 @@ class creatModel(nn.Module):
         self.conv2_0 = nn.Conv2d(nFeats, nOutChannels_0, 1, 1, 0, bias=False)
         self.conv4_0 = nn.Conv2d(nFeats + nOutChannels_0, nFeats, 1, 1, 0)
         self.conv2_1 = nn.Conv2d(nFeats, nOutChannels_1, 1, 1, 0, bias=False)
-        self.conv4_1 = nn.Conv2d(nFeats + nOutChannels_1, nFeats, 1, 1, 0, bias=False)
+        # self.conv4_1 = nn.Conv2d(nFeats + nOutChannels_1, nFeats, 1, 1, 0, bias=False)
         # self.conv2_2 = nn.Conv2d(nFeats, nOutChannels_2, 1, 1, 0, bias=False)
 
     def forward(self, x):
@@ -320,11 +320,11 @@ class creatModel(nn.Module):
             elif i == 1:
                 tmpOut = self.conv2_1(ll)
                 out.insert(i, tmpOut)
-                ll_ = torch.cat([ll, tmpOut], dim=1)
-                inter = self.conv4_1(ll_)
-            elif i == 2:
-                tmpOut = self.conv2_2(ll)
-                out.insert(i, tmpOut)
+        #         ll_ = torch.cat([ll, tmpOut], dim=1)
+        #         inter = self.conv4_1(ll_)
+        #     elif i == 2:
+        #         tmpOut = self.conv2_2(ll)
+        #         out.insert(i, tmpOut)
         return out
 
 
@@ -463,20 +463,24 @@ def main():
             model.load_state_dict(state['state_dict'])
             epoch = state['epoch']
             loss_array = state['loss']
-            image = Image.open('test_img/im9.png').resize([256, 256])
+            image = Image.open('test_img/im1.png').resize([256, 256])
             image_normalize = (mytransform(image)).unsqueeze(0).cuda().half()
             result = model.forward(image_normalize)
-            # accuracy = pckh(result[3], label.cuda().half())
-            # print(accuracy)
-            results = result[1].cpu().float().data.numpy()
-            # image = (image.cpu().float().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
-            # image = Image.fromarray(image)
+            results = result[0].cpu().float().data.numpy()
+            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)  # 调整子图间距
             draw = ImageDraw.Draw(image)
+            plt.subplot(1, 2, 1)
+            plt.imshow(image)
+            plt.subplot(1, 2, 2)
+            plt.imshow(results[0, 1, :, :])
+            plt.show()
+            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)
+            results = result[1].cpu().float().data.numpy()
             for i in range(17):
                 plt.subplot(3, 9, i + 1)
                 # plt.subplot(2, 1, 1)
                 result = results[0, i, :, :]
-                dense_crf(image, results[0, :, :])
+                # dense_crf(image, results[0, :, :])
                 result_norm = (result - result.min())/(result.max() - result.min())
                 # # plt.imshow(result)
                 # result = (ndimage.maximum_filter(result, footprint=ndimage.generate_binary_structure(
@@ -498,18 +502,6 @@ def main():
             plt.subplot(3, 1, 3)
             plt.imshow(image)
             plt.show()
-
-
-        result_skeleton = result[:, np.array(sks)+1, :, :][:, :, 0, :, :] + result[:, np.array(sks)+1, :, :][:, :, 1, :, :]
-            # - result[0, 0, :, :]d
-
-        for i in range(19):
-            plt.subplot(3, 10, i + 1)
-            plt.imshow(result_skeleton[0, i, :, :])
-
-        plt.subplot(3, 1, 3)
-        plt.imshow(image)
-        plt.show()
 
         print('yyy')
 

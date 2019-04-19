@@ -17,7 +17,7 @@ from scipy import ndimage
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0 "
 
 nModules = 2
 nFeats = 256
@@ -34,7 +34,7 @@ skeleton = 20
 
 threshold = 0.8
 
-mode = 'train'
+mode = 'test'
 save_model_name = 'params_1_aspp.pkl'
 
 train_set = 'train_set.txt'
@@ -446,8 +446,8 @@ def main():
                 # for i in range(38):
                 #     x = result[0, i, :, :]
                 #     ys, xs = np.multiply(np.where(x == np.max(x)), 4)
-                #     width = 5
-                #     draw.ellipse([xs - width, ys - width, xs + width, ys + width], fill=(0, 255, 0), outline=(255, 0, 0))
+                    width = 5
+                    draw.ellipse([xs - width, ys - width, xs + width, ys + width], fill=(0, 255, 0), outline=(255, 0, 0))
 
                 del draw
                 plt.subplot(3, 1, 3)
@@ -455,55 +455,45 @@ def main():
                 plt.show()
 
         elif test_mode == 'test':
-            model = creatModel()
-            model.cuda().half()
-            state = torch.load(save_model_name)
-            model.load_state_dict(state['state_dict'])
-            epoch = state['epoch']
-            loss_array = state['loss']
-            image = Image.open('test_img/im6.png').resize([256, 256])
+            image = Image.open('test_img/im1.jpg').resize([256, 256])
             image_normalize = (mytransform(image)).unsqueeze(0).cuda().half()
             result = model.forward(image_normalize)
             # accuracy = pckh(result[3], label.cuda().half())
             # print(accuracy)
-            results = result[2].cpu().float().data.numpy()
+            results = result[0].cpu().float().data.numpy()
             # image = (image.cpu().float().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
             # image = Image.fromarray(image)
+            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)  # 调整子图间距
             draw = ImageDraw.Draw(image)
+            plt.subplot(1, 2, 1)
+            plt.imshow(image)
+            plt.subplot(1, 2, 2)
+            plt.imshow(results[0, 1, :, :])
+            plt.show()
+            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)
+            results = result[1].cpu().float().data.numpy()
+            for i in range(nOutChannels_1):
+                plt.subplot(3, int(nOutChannels_1 / 2), i + 1)
+                result_print = results[0, i, :, :]
+                plt.imshow(result_print)
+            plt.subplot(3, 1, 3)
+            plt.imshow(image)
+            plt.show()
+            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)
+            results = result[2].cpu().float().data.numpy()
             for i in range(17):
                 plt.subplot(3, 9, i + 1)
-                # plt.subplot(2, 1, 1)
-                result = results[0, i, :, :]
-                # result = (result - result.min())/(result.max() - result.min())
-                # # plt.imshow(result)
-                # result = (ndimage.maximum_filter(result, footprint=ndimage.generate_binary_structure(
-                #     2, 1)) == result) * (result > threshold)
-                # plt.subplot(2, 1, 2)
-                plt.imshow(result)
-                # plt.show()
-                print('eihfop')
-            # for i in range(38):
-            #     x = result[0, i, :, :]
-            #     ys, xs = np.multiply(np.where(x == np.max(x)), 4)
-            #     width = 5
-            #     draw.ellipse([xs - width, ys - width, xs + width, ys + width], fill=(0, 255, 0), outline=(255, 0, 0))
+                result_print = results[0, i, :, :]
+
+                # y_point, x_point = np.multiply(np.where(result_print == np.max(result)), 4)
+                plt.imshow(result_print)
+                # width = 2
+                # draw.ellipse([x_point - width, y_point - width, x_point + width, y_point + width], fill=(int(255/17*i), int(255/17*i), int(255/17*i)), outline=(int(255/17*i), int(255/17*i), int(255/17*i)))
 
             del draw
             plt.subplot(3, 1, 3)
             plt.imshow(image)
             plt.show()
-
-
-        result_skeleton = result[:, np.array(sks)+1, :, :][:, :, 0, :, :] + result[:, np.array(sks)+1, :, :][:, :, 1, :, :]
-            # - result[0, 0, :, :]d
-
-        for i in range(19):
-            plt.subplot(3, 10, i + 1)
-            plt.imshow(result_skeleton[0, i, :, :])
-
-        plt.subplot(3, 1, 3)
-        plt.imshow(image)
-        plt.show()
 
         print('yyy')
 
