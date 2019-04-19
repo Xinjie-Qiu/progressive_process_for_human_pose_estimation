@@ -19,7 +19,7 @@ import pydensecrf.utils as utils
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 nModules = 2
 nFeats = 256
@@ -422,8 +422,6 @@ def main():
         model.cuda().half()
         state = torch.load(save_model_name)
         model.load_state_dict(state['state_dict'])
-        epoch = state['epoch']
-        loss_array = state['loss']
         test_mode = 'test'
         if test_mode == 'coco':
 
@@ -441,10 +439,11 @@ def main():
                 image = (val_image[0] + 1) /2
                 image = transforms.ToPILImage()(image)
                 draw = ImageDraw.Draw(image)
+                resultsmax = []
                 for i in range(37):
                     plt.subplot(3, 19, i + 1)
                     result = results[0, i, :, :]
-
+                    resultsmax.append(np.max(result))
                     plt.imshow(result)
                 # for i in range(38):
                 #     x = result[0, i, :, :]
@@ -458,61 +457,51 @@ def main():
                 plt.show()
 
         elif test_mode == 'test':
-            model = creatModel()
-            model.cuda().half()
-            state = torch.load(save_model_name)
-            model.load_state_dict(state['state_dict'])
-            epoch = state['epoch']
-            loss_array = state['loss']
-            image = Image.open('test_img/im9.png').resize([256, 256])
+            image = Image.open('test_img/im3.jpg').resize([256, 256])
             image_normalize = (mytransform(image)).unsqueeze(0).cuda().half()
             result = model.forward(image_normalize)
             # accuracy = pckh(result[3], label.cuda().half())
-            # print(accuracy)
-            results = result[2].cpu().float().data.numpy()
+            # print(accuracy)cccc
+            results = result[0].cpu().float().data.numpy()
             # image = (image.cpu().float().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
             # image = Image.fromarray(image)
+            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)  # 调整子图间距
             draw = ImageDraw.Draw(image)
-            for i in range(17):
-                plt.subplot(3, 9, i + 1)
-                # plt.subplot(2, 1, 1)
-                result = results[0, i, :, :]
-                dense_crf(image, results[0, :, :])
-                result_norm = (result - result.min())/(result.max() - result.min())
-                # # plt.imshow(result)
-                # result = (ndimage.maximum_filter(result, footprint=ndimage.generate_binary_structure(
-                #     2, 1)) == result) * (result_norm > 0.9)
-                # plt.subplot(1, 2, 1)
-                # plt.imshow(result_norm)
-                # plt.subplot(1, 2, 2)
-                plt.imshow(result)
-                # plt.show()
-                # plt.show()
-                print('eihfop')
-            # for i in range(38):
-            #     x = result[0, i, :, :]
-            #     ys, xs = np.multiply(np.where(x == np.max(x)), 4)
-            #     width = 5
-            #     draw.ellipse([xs - width, ys - width, xs + width, ys + width], fill=(0, 255, 0), outline=(255, 0, 0))
-
-            del draw
+            plt.subplot(1, 2, 1)
+            plt.imshow(image)
+            plt.subplot(1, 2, 2)
+            plt.imshow(results[0, 1, :, :])
+            plt.show()
+            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)
+            results = result[1].cpu().float().data.numpy()
+            for i in range(nOutChannels_1):
+                plt.subplot(3, int(nOutChannels_1/2), i+1)
+                result_print = results[0, i, :, :]
+                plt.imshow(result_print)
             plt.subplot(3, 1, 3)
             plt.imshow(image)
             plt.show()
+            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)
+            results = result[2].cpu().float().data.numpy()
+            result_max = []
+            for i in range(17):
+                # plt.subplot(3, 9, i + 1)
+                result_print = results[0, i, :, :]
+                result_normalize = (result_print - np.min(result_print)) / (np.max(result_print) - np.min(result_print))
 
+                y_point, x_point = np.multiply(np.where(result_normalize > 0.7), 4)
+                # plt.imshow(result_print)
+                result_max.append(np.max(result_normalize))
 
-        result_skeleton = result[:, np.array(sks)+1, :, :][:, :, 0, :, :] + result[:, np.array(sks)+1, :, :][:, :, 1, :, :]
-            # - result[0, 0, :, :]d
+                width = 1
+                for j in range(len(x_point)):
+                    draw.ellipse([x_point[j] - width, y_point[j] - width, x_point[j] + width, y_point[j] + width], fill=(int(255/17*i), int(255/17*i), int(255/17*i)), outline=(int(255/17*i), int(255/17*i), int(255/17*i)))
 
-        for i in range(19):
-            plt.subplot(3, 10, i + 1)
-            plt.imshow(result_skeleton[0, i, :, :])
-
-        plt.subplot(3, 1, 3)
-        plt.imshow(image)
-        plt.show()
-
-        print('yyy')
+            del draw
+            # plt.subplot(3, 1, 3)
+            plt.imshow(image)
+            plt.show()
+            print('efsdf')
 
 
 if __name__ == '__main__':

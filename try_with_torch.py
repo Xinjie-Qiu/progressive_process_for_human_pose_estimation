@@ -14,6 +14,7 @@ from os import path
 import math
 import torch.nn.functional as F
 from scipy import ndimage
+from numpy import matlib
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
@@ -25,15 +26,15 @@ nStack = 4
 nKeypoint = 17
 nSkeleton = 19
 nOutChannels = nKeypoint
-epochs = 50
-batch_size = 32
+epochs = 51
+batch_size = 16
 keypoints = 17
 skeleton = 20
 
 threshold = 0.8
 
 mode = 'train'
-save_model_name = 'params_1_coco_keypoints.pkl'
+save_model_name = 'params_2_coco_keypoints.pkl'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -86,7 +87,7 @@ class myImageDataset_COCO(data.Dataset):
 
     def __len__(self):
         return len(self.lists)
-        # return 1000
+        # return 100
 
     def __getitem__(self, index):
         list = self.lists[index]
@@ -97,14 +98,14 @@ class myImageDataset_COCO(data.Dataset):
         w, h = image.size
         image = image.resize([256, 256])
         if self.transform is not None:
-            image = self.transform(image)
+            image_after = self.transform(image)
         label_id = self.anno.getAnnIds(list)
         labels = self.anno.loadAnns(label_id)
         Label_map_skeleton = np.zeros([64, 64])
         Label_map_skeleton = Image.fromarray(Label_map_skeleton, 'L')
         draw_skeleton = ImageDraw.Draw(Label_map_skeleton)
         for label in labels:
-            sks = np.array(self.anno.loadCats(label['category_id'])[0]['skeleton']) - 1
+            # sks = np.array(self.anno.loadCats(label['category_id'])[0]['skeleton']) - 1
             kp = np.array(label['keypoints'])
             x = np.array(kp[0::3] / w * 64).astype(np.int)
             y = np.array(kp[1::3] / h * 64).astype(np.int)
@@ -128,7 +129,7 @@ class myImageDataset_COCO(data.Dataset):
 
                     Gauss_map[k, :, :] = np.exp(-temp)
         del draw_skeleton
-        return image, torch.Tensor(np.array(Gauss_map))
+        return image_after, torch.Tensor(np.array(Gauss_map))
 
 # class myImageDataset(data.Dataset):
 #     def __init__(self, filename, matdir, transform=None, dim=(256, 256), n_channels=3,
@@ -297,87 +298,23 @@ class creatModel(nn.Module):
         return out
 
 
-# class creatModelD(nn.Module):
-#     def __init__(self):
-#         super(creatModelD, self).__init__()
-#         self.conv1 = nn.Conv2d(nOutChannels + 3, 64, 3, 1, 1)
-#         self.relu = nn.ReLU()
-#         self.residual1 = ResidualBlock(64, 128)
-#         self.residual2 = ResidualBlock(128, 128)
-#         self.residual3 = ResidualBlock(128, nFeats)
-#         self.hourglass = hourglass(4, nFeats)
-#         self.residual4 = ResidualBlock(nFeats, nFeats)
-#         self.lin = lin(nFeats, nFeats)
-#         self.conv2 = nn.Conv2d(nFeats, nOutChannels, 1, 1, 0)
-#
-#     def forward(self, x):
-#         x = self.conv1(x)
-#         x = self.relu(x)
-#         x = self.residual1(x)
-#         x = self.residual2(x)
-#         x = self.residual3(x)
-#         x = self.hourglass(x)
-#         ll = x
-#         for i in range(nModules):
-#             ll = self.residual4(ll)
-#         ll = lin(ll)
-#         out = self.conv2(ll)
-#         return out
-
-
-# class PCKh(nn.Module):
-#     def __init__(self):
-#         super(PCKh, self).__init__()
-#
-#     def forward(self, x, target):
-#         correct = 0
-#         total = 0
-#         for i in range(batch_size):
-#             head_heat_map = target[i, 13, :, :]
-#             head_ys = torch.max(torch.max(head_heat_map, 1)[0], 0)[1]
-#             head_xs = torch.max(head_heat_map, 1)[1][head_ys]
-#             neck_heat_map = target[i, 1, :, :]
-#             neck_ys = torch.max(torch.max(neck_heat_map, 1)[0], 0)[1]
-#             neck_xs = torch.max(neck_heat_map, 1)[1][neck_ys]
-#             standard = torch.sqrt((torch.pow(head_ys - neck_ys, 2) + torch.pow(head_xs - neck_xs, 2)).float()) / 2
-#             for j in range(14):
-#                 label_heat_map = target[i, j, :, :]
-#                 if torch.max(label_heat_map) == 0:
-#                     continue
-#                 label_ys = torch.max(torch.max(label_heat_map, 1)[0], 0)[1]
-#                 label_xs = torch.max(label_heat_map, 1)[1][head_ys]
-#                 predict_heat_map = x[i, j, :, :]
-#                 predict_ys = torch.max(torch.max(predict_heat_map, 1)[0], 0)[1]
-#                 predict_xs = torch.max(label_heat_map, 1)[1][head_ys]
-#                 if torch.sqrt(
-#                         (torch.pow(label_ys - predict_ys, 2) + torch.pow(label_xs - predict_xs, 2)).float()) < standard:
-#                     correct += 1
-#                 total += 1
-#         return correct / total
-
-
 def main():
     if mode == 'train':
-        mytransform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
-        ])
         model = creatModel()
-        model.cuda().half()
-        loss1_keypoints = nn.MSELoss().cuda().half()
-        loss2_keypoints = nn.MSELoss().cuda().half()
-        loss3_keypoints = nn.MSELoss().cuda().half()
-        loss4_keypoints = nn.MSELoss().cuda().half()
+        model.cuda()
+        loss1_keypoints = nn.MSELoss().cuda()
+        loss2_keypoints = nn.MSELoss().cuda()
+        loss3_keypoints = nn.MSELoss().cuda()
+        loss4_keypoints = nn.MSELoss().cuda()
         loss_array = []
-        accuracy_array = []
         mytransform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
         ])
         imgLoader_train_coco = data.DataLoader(
             myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size,
-            shuffle=True, num_workers=20)
-        opt = torch.optim.Adam(model.parameters(), lr=1e-4, eps=1e-4)
+            shuffle=True, num_workers=1)
+        opt = torch.optim.Adam(model.parameters(), lr=1e-5)
         # imgLoader_eval_coco = data.DataLoader(
         #     myImageDataset_COCO(eval_set_coco, eval_image_dir_coco, transform=mytransform), batch_size=batch_size,
         #     shuffle=True, num_workers=4)
@@ -391,15 +328,15 @@ def main():
             loss_array = state['loss']
         while epoch <= epochs:
             for i, [x_, y_keypoints] in enumerate(imgLoader_train_coco, 0):
-                bx_, by_keypoints = x_.cuda().half(), y_keypoints.cuda().half()
+                bx_, by_keypoints = x_.cuda(), y_keypoints.cuda()
                 result = model(bx_)
-                loss_1 = loss1_keypoints.forward(result[0][:, :17, :, :],
+                loss_1 = loss1_keypoints.forward(result[0],
                                                  by_keypoints)
-                loss_2 = loss2_keypoints.forward(result[1][:, :17, :, :],
+                loss_2 = loss2_keypoints.forward(result[1],
                                                  by_keypoints)
-                loss_3 = loss3_keypoints.forward(result[2][:, :17, :, :],
+                loss_3 = loss3_keypoints.forward(result[2],
                                                  by_keypoints)
-                loss_4 = loss4_keypoints.forward(result[3][:, :17, :, :],
+                loss_4 = loss4_keypoints.forward(result[3],
                                                  by_keypoints)
                 losses = loss_1 + loss_2 + loss_3 + loss_4
                 opt.zero_grad()
@@ -411,6 +348,8 @@ def main():
                         loss_1.cpu().float().data.numpy(), loss_2.cpu().float().data.numpy(),
                         loss_3.cpu().float().data.numpy(), loss_4.cpu().float().data.numpy()
                     ))
+                    step = epoch * len(imgLoader_train_coco) + i
+
 
             loss_array.append(loss_4.cpu().float().data.numpy())
             # accuracy_array.append(accuracy)
@@ -433,11 +372,9 @@ def main():
             transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
         ])
         model = creatModel()
-        model.cuda().half()
+        model.cuda()
         state = torch.load(save_model_name)
         model.load_state_dict(state['state_dict'])
-        epoch = state['epoch']
-        loss_array = state['loss']
         test_mode = 'test'
         if test_mode == 'coco':
 
@@ -445,9 +382,9 @@ def main():
                 myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=1,
                 shuffle=True, num_workers=1)
             for i, [val_image, val_keypoints, val_skeleton] in enumerate(imgLoader_val_coco):
-                bx_ = val_image.cuda().half()
+                bx_ = val_image.cuda()
                 result = model.forward(bx_)
-                # accuracy = pckh(result[3], label.cuda().half())
+                # accuracy = pckh(result[3], label.cuda())
                 # print(accuracy)
                 results = result[3].cpu().float().float().data.numpy()
                 # image = (image.cpu().float().float().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
@@ -472,57 +409,26 @@ def main():
                 plt.show()
 
         elif test_mode == 'test':
-            model = creatModel()
-            model.cuda().half()
-            state = torch.load(save_model_name)
-            model.load_state_dict(state['state_dict'])
-            epoch = state['epoch']
-            loss_array = state['loss']
-            image = Image.open('test_img/im3.jpg').resize([256, 256])
-            image_normalize = (mytransform(image)).unsqueeze(0).cuda().half()
+            image = Image.open('test_img/images_3.jpeg').resize([256, 256])
+            image_normalize = (mytransform(image)).unsqueeze(0).cuda()
             result = model.forward(image_normalize)
-            # accuracy = pckh(result[3], label.cuda().half())
-            # print(accuracy)
-            results = result[3].cpu().float().float().data.numpy()
-            # image = (image.cpu().float().float().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
-            # image = Image.fromarray(image)
+            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)  # 调整子图间距
             draw = ImageDraw.Draw(image)
-            for i in range(18):
+            results = result[3].cpu().float().data.numpy()
+            for i in range(17):
                 plt.subplot(3, 9, i + 1)
-                # plt.subplot(2, 1, 1)
-                result = results[0, i, :, :]
-                # result = (result - result.min())/(result.max() - result.min())
-                # # plt.imshow(result)
-                # result = (ndimage.maximum_filter(result, footprint=ndimage.generate_binary_structure(
-                #     2, 1)) == result) * (result > threshold)
-                # plt.subplot(2, 1, 2)
-                plt.imshow(result)
-                # plt.show()
-                print('eihfop')
-            # for i in range(38):
-            #     x = result[0, i, :, :]
-            #     ys, xs = np.multiply(np.where(x == np.max(x)), 4)
-            #     width = 5
-            #     draw.ellipse([xs - width, ys - width, xs + width, ys + width], fill=(0, 255, 0), outline=(255, 0, 0))
+                result_print = results[0, i, :, :]
+
+                # y_point, x_point = np.multiply(np.where(result_print == np.max(result)), 4)
+                plt.imshow(result_print)
+                # width = 2
+                # draw.ellipse([x_point - width, y_point - width, x_point + width, y_point + width], fill=(int(255/17*i), int(255/17*i), int(255/17*i)), outline=(int(255/17*i), int(255/17*i), int(255/17*i)))
 
             del draw
             plt.subplot(3, 1, 3)
             plt.imshow(image)
             plt.show()
-
-
-        result_skeleton = result[:, np.array(sks)+1, :, :][:, :, 0, :, :] + result[:, np.array(sks)+1, :, :][:, :, 1, :, :]
-            # - result[0, 0, :, :]d
-
-        for i in range(19):
-            plt.subplot(3, 10, i + 1)
-            plt.imshow(result_skeleton[0, i, :, :])
-
-        plt.subplot(3, 1, 3)
-        plt.imshow(image)
-        plt.show()
-
-        print('yyy')
+            print('efs')
 
 
 if __name__ == '__main__':
