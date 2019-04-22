@@ -36,15 +36,15 @@ nSkeleton = 19
 nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton + 1
 nOutChannels_2 = nKeypoint
-epochs = 51
-batch_size = 32
+epochs = 50
+batch_size = 16
 keypoints = 17
 skeleton = 20
 
 threshold = 0.8
 
 mode = 'train'
-save_model_name = 'params_3_aspp.pkl'
+save_model_name = 'params_4_aspp.pkl'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -329,9 +329,9 @@ def main():
             myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size,
             shuffle=True, num_workers=16)
         opt = torch.optim.Adam(model.parameters(), lr=1e-4)
-        model, opt = amp.initialize(model, opt, opt_level="O1")
+        # model, opt = amp.initialize(model, opt, opt_level="O1")
         model.train()
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', patience=10, min_lr=1e-8)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', patience=10)
         # imgLoader_eval_coco = data.DataLoader(
         #     myImageDataset_COCO(eval_set_coco, eval_image_dir_coco, transform=mytransform), batch_size=batch_size,
         #     shuffle=True, num_workers=4)
@@ -361,8 +361,9 @@ def main():
                 loss_3 = loss3_keypoints.forward(result[2], by_keypoints)
                 losses = loss_1 + loss_2 + loss_3
                 opt.zero_grad()
-                with amp.scale_loss(losses, opt) as scaled_loss:
-                    scaled_loss.backward()
+                # with amp.scale_loss(losses, opt) as scaled_loss:
+                #     scaled_loss.backward()
+                losses.backward()
                 opt.step()
                 scheduler.step(losses)
                 if i % 50 == 0:
