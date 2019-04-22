@@ -14,6 +14,15 @@ from os import path
 import math
 import torch.nn.functional as F
 from scipy import ndimage
+from numpy import matlib
+from torch.optim import lr_scheduler
+from graphviz import Digraph
+from torch.autograd import Variable
+from torchviz import make_dot
+from apex import amp
+import matplotlib
+
+matplotlib.use('TkAgg')
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
@@ -28,14 +37,14 @@ nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton + 1
 nOutChannels_2 = nKeypoint
 epochs = 51
-batch_size = 16
+batch_size = 32
 keypoints = 17
 skeleton = 20
 
 threshold = 0.8
 
-mode = 'test'
-save_model_name = 'params_2_aspp.pkl'
+mode = 'train'
+save_model_name = 'params_3_aspp.pkl'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -71,13 +80,6 @@ sks = [[15, 13]
     , [4, 6]]
 
 
-def my_collate(batch):
-    data = [item[0] for item in batch]
-    target = [item[1] for item in batch]
-    target = torch.LongTensor(target)
-    return [data, target]
-
-
 class myImageDataset_COCO(data.Dataset):
     def __init__(self, anno, image_dir, transform=None):
         'Initialization'
@@ -88,7 +90,7 @@ class myImageDataset_COCO(data.Dataset):
 
     def __len__(self):
         return len(self.lists)
-        # return 1000
+        # return 100
 
     def __getitem__(self, index):
         list = self.lists[index]
@@ -118,7 +120,6 @@ class myImageDataset_COCO(data.Dataset):
             Gauss_map = np.zeros([17, 64, 64])
             for k in range(keypoints):
                 if v[k] > 0:
-
                     sigma = 1
                     mask_x = np.matlib.repmat(x[k], 64, 64)
                     mask_y = np.matlib.repmat(y[k], 64, 64)
@@ -137,7 +138,7 @@ class myImageDataset_COCO(data.Dataset):
             for i, sk in enumerate(sks):
                 if np.all(v[sk] > 0):
                     draw_background.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
-                                       'rgb({}, {}, {})'.format(1, 1, 1))
+                                         'rgb({}, {}, {})'.format(1, 1, 1))
                     draw_skeleton.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
                                        'rgb({}, {}, {})'.format(i + 1, i + 1, i + 1))
         del draw_skeleton, draw_background
@@ -145,56 +146,12 @@ class myImageDataset_COCO(data.Dataset):
             np.array(Label_map_skeleton)).long(), torch.Tensor(
             np.array(Label_map_background)).long()
 
-# class myImageDataset(data.Dataset):
-#     def __init__(self, filename, matdir, transform=None, dim=(256, 256), n_channels=3,
-#                  n_joints=14):
-#         'Initialization'
-#         self.mat = scipy.io.loadmat(matdir)
-#         self.dim = dim
-#         file = open(filename)
-#         self.list = file.readlines()
-#         self.n_channels = n_channels
-#         self.n_joints = n_joints
-#         self.transform = transform
-#
-#     def __len__(self):
-#         return len(self.list)
-#
-#     def __getitem__(self, index):
-#         image = Image.open((rootdir + self.list[index]).strip()).convert('RGB')
-#         w, h = image.size
-#         image = image.resize([256, 256])
-#         if self.transform is not None:
-#             image = self.transform(image)
-#
-#         number = int(self.list[index][2:6]) - 1
-#         Gauss_map = np.zeros([14, 64, 64])
-#         for k in range(14):
-#             xs = self.mat['joints'][0][k][number] / w * 64
-#             ys = self.mat['joints'][1][k][number] / h * 64
-#             sigma = 1
-#             mask_x = np.matlib.repmat(xs, 64, 64)
-#             mask_y = np.matlib.repmat(ys, 64, 64)
-#
-#             x1 = np.arange(64)
-#             x_map = np.matlib.repmat(x1, 64, 1)
-#
-#             y1 = np.arange(64)
-#             y_map = np.matlib.repmat(y1, 64, 1)
-#             y_map = np.transpose(y_map)
-#
-#             temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
-#
-#             Gauss_map[k, :, :] = np.exp(-temp)
-#
-#         return image, torch.Tensor(Gauss_map)
-
 
 class _ASPPModule(nn.Module):
     def __init__(self, inplanes, planes, kernel_size, padding, dilation):
         super(_ASPPModule, self).__init__()
         self.atrous_conv = nn.Conv2d(inplanes, planes, kernel_size=kernel_size,
-                                            stride=1, padding=padding, dilation=dilation, bias=False)
+                                     stride=1, padding=padding, dilation=dilation, bias=False)
         self.bn = nn.BatchNorm2d(planes)
         self.relu = nn.ReLU()
 
@@ -206,8 +163,9 @@ class _ASPPModule(nn.Module):
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self, numIn, numOut):
+    def __init__(self, numIn, numOut, stride=1):
         super(ResidualBlock, self).__init__()
+        self.stride = stride
         self.numIn = numIn
         self.numOut = numOut
         self.bn1 = nn.BatchNorm2d(numIn)
@@ -215,11 +173,15 @@ class ResidualBlock(nn.Module):
         self.conv1 = nn.Conv2d(numIn, int(numOut / 2), 1, 1)
         self.bn2 = nn.BatchNorm2d(int(numOut / 2))
         self.relu = nn.ReLU(True)
-        self.conv2 = nn.Conv2d(int(numOut / 2), int(numOut / 2), 3, 1, 1)
+        self.conv2 = nn.Conv2d(int(numOut / 2), int(numOut / 2), 3, stride, 1)
         self.bn3 = nn.BatchNorm2d(int(numOut / 2))
         self.relu = nn.ReLU(True)
         self.conv3 = nn.Conv2d(int(numOut / 2), numOut, 1, 1)
-        self.conv4 = nn.Conv2d(numIn, numOut, 1, 1)
+        self.bn4 = nn.BatchNorm2d(numOut)
+        self.downsaple = nn.Sequential(
+            nn.Conv2d(numIn, numOut, 1, stride=stride, bias=False),
+            nn.BatchNorm2d(numOut)
+        )
 
     def forward(self, x):
         residual = x
@@ -231,9 +193,10 @@ class ResidualBlock(nn.Module):
         x = self.conv2(x)
         x = self.bn3(x)
         x = self.relu(x)
-        out = self.conv3(x)
-        if self.numIn != self.numOut:
-            residual = self.conv4(residual)
+        x = self.conv3(x)
+        out = self.bn4(x)
+        if self.stride != 1 | self.numIn != self.numOut:
+            residual = self.downsaple(residual)
         out += residual
         return out
 
@@ -244,6 +207,7 @@ class hourglass(nn.Module):
         self.n = n
         self.f = f
         self.residual_block = ResidualBlock(f, f)
+        self.residual_block_stride = ResidualBlock(f, f, stride=2)
         if n > 1:
             self.hourglass1 = hourglass(n - 1, f)
         self.maxpool = nn.MaxPool2d(2)
@@ -259,23 +223,21 @@ class hourglass(nn.Module):
                                              nn.BatchNorm2d(256),
                                              nn.ReLU())
         self.conv1 = nn.Conv2d(1280, 256, 1, bias=False)
+        self.conv2 = nn.Conv2d(2 * f, f, 1, bias=False)
+        self.conv3 = nn.Conv2d(f, f, 3, 2, 1)
 
     def forward(self, x):
         up1 = x
-        for i in range(nModules):
-            up1 = self.residual_block(up1)
-        low1 = self.maxpool(x)
-        for i in range(nModules):
-            low1 = self.residual_block(low1)
+        low1 = self.residual_block_stride(x)
         if self.n > 1:
             low2 = self.hourglass1(low1)
         else:
             low2 = low1
         low3 = low2
-        for i in range(nModules):
-            low3 = self.residual_block(low3)
+        low3 = self.residual_block(low3)
         up2 = nn.functional.interpolate(low3, scale_factor=2, mode='bilinear', align_corners=True)
-        out = up1 + up2
+        out = torch.cat([up1, up2], dim=1)
+        out = self.conv2(out)
         return out
 
 
@@ -300,8 +262,7 @@ class creatModel(nn.Module):
         super(creatModel, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, 7, 2, 3)
         self.relu = nn.ReLU()
-        self.residual1 = ResidualBlock(64, 128)
-        self.max_pool1 = nn.MaxPool2d(2)
+        self.residual1 = ResidualBlock(64, 128, stride=2)
         self.residual2 = ResidualBlock(128, 128)
         self.residual3 = ResidualBlock(128, nFeats)
         self.hourglass1 = hourglass(4, nFeats)
@@ -317,7 +278,6 @@ class creatModel(nn.Module):
         x = self.conv1(x)
         x = self.relu(x)
         x = self.residual1(x)
-        x = self.max_pool1(x)
         x = self.residual2(x)
         x = self.residual3(x)
 
@@ -326,13 +286,12 @@ class creatModel(nn.Module):
         for i in range(nStack):
             hg = self.hourglass1(inter)
             ll = hg
-            for j in range(nModules):
-                ll = self.residual4(ll)
+            ll = self.residual4(ll)
             ll = self.lin(ll)
             if i == 0:
                 tmpOut = self.conv2_0(ll)
                 out.insert(i, tmpOut)
-                ll_ =torch.cat([ll, tmpOut],dim=1)
+                ll_ = torch.cat([ll, tmpOut], dim=1)
                 inter = self.conv4_0(ll_)
             elif i == 1:
                 tmpOut = self.conv2_1(ll)
@@ -368,8 +327,11 @@ def main():
         ])
         imgLoader_train_coco = data.DataLoader(
             myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size,
-            shuffle=True, num_workers=20)
+            shuffle=True, num_workers=16)
         opt = torch.optim.Adam(model.parameters(), lr=1e-4)
+        model, opt = amp.initialize(model, opt, opt_level="O1")
+        model.train()
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', patience=10, min_lr=1e-8)
         # imgLoader_eval_coco = data.DataLoader(
         #     myImageDataset_COCO(eval_set_coco, eval_image_dir_coco, transform=mytransform), batch_size=batch_size,
         #     shuffle=True, num_workers=4)
@@ -380,7 +342,11 @@ def main():
             model.load_state_dict(state['state_dict'])
             opt.load_state_dict(state['optimizer'])
             epoch = state['epoch']
-            loss_array = state['loss']
+            loss_epoch_array = state['loss']
+            loss1_epoch_array = state['loss1']
+            loss2_epoch_array = state['loss2']
+            loss3_epoch_array = state['loss3']
+            step_epoch_array = state['step']
         while epoch <= epochs:
             loss_record_array = []
             loss1_record_array = []
@@ -395,8 +361,10 @@ def main():
                 loss_3 = loss3_keypoints.forward(result[2], by_keypoints)
                 losses = loss_1 + loss_2 + loss_3
                 opt.zero_grad()
-                losses.backward()
+                with amp.scale_loss(losses, opt) as scaled_loss:
+                    scaled_loss.backward()
                 opt.step()
+                scheduler.step(losses)
                 if i % 50 == 0:
                     loss_record = losses.cpu().data.numpy()
                     loss1_record = loss_1.cpu().data.numpy()
@@ -413,15 +381,16 @@ def main():
                     loss3_record_array.append(loss3_record)
                     step_array.append(steps)
 
-
-            loss_epoch_array.append(loss3_record_array)
+            loss_epoch_array.append(loss_record_array)
             loss1_epoch_array.append(loss1_record_array)
             loss2_epoch_array.append(loss2_record_array)
             loss3_epoch_array.append(loss3_record_array)
             step_epoch_array.append(step_array)
             # accuracy_array.append(accuracy)
-            x = np.linspace(0, epoch, epoch + 1)
-            plt.plot(x, loss_array)
+            plt.plot(np.reshape(step_epoch_array, -1), np.reshape(loss_epoch_array, -1),
+                     np.reshape(step_epoch_array, -1), np.reshape(loss1_epoch_array, -1),
+                     np.reshape(step_epoch_array, -1), np.reshape(loss2_epoch_array, -1),
+                     np.reshape(step_epoch_array, -1), np.reshape(loss3_epoch_array, -1))
             plt.savefig(loss_img)
             # accuracy_array.append(accuracy)
             epoch += 1
@@ -429,7 +398,11 @@ def main():
                 'epoch': epoch,
                 'state_dict': model.state_dict(),
                 'optimizer': opt.state_dict(),
-                'loss': loss_array
+                'loss': loss_epoch_array,
+                'loss1': loss1_epoch_array,
+                'loss2': loss2_epoch_array,
+                'loss3': loss3_epoch_array,
+                'step': step_epoch_array
             }
             torch.save(state, save_model_name)
 
@@ -458,7 +431,7 @@ def main():
                 results = result[3].cpu().float().data.numpy()
                 # image = (image.cpu().float().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
                 # image = Image.fromarray(image)
-                image = (val_image[0] + 1) /2
+                image = (val_image[0] + 1) / 2
                 image = transforms.ToPILImage()(image)
                 draw = ImageDraw.Draw(image)
                 for i in range(37):
@@ -466,11 +439,12 @@ def main():
                     result = results[0, i, :, :]
 
                     plt.imshow(result)
-                # for i in range(38):
-                #     x = result[0, i, :, :]
-                #     ys, xs = np.multiply(np.where(x == np.max(x)), 4)
+                    # for i in range(38):
+                    #     x = result[0, i, :, :]
+                    #     ys, xs = np.multiply(np.where(x == np.max(x)), 4)
                     width = 5
-                    draw.ellipse([xs - width, ys - width, xs + width, ys + width], fill=(0, 255, 0), outline=(255, 0, 0))
+                    draw.ellipse([xs - width, ys - width, xs + width, ys + width], fill=(0, 255, 0),
+                                 outline=(255, 0, 0))
 
                 del draw
                 plt.subplot(3, 1, 3)
