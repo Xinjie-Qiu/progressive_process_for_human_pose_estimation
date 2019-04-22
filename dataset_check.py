@@ -7,14 +7,16 @@ import scipy.io
 import numpy as np
 import torchvision
 import torchvision.transforms as transforms
+import matplotlib
 import matplotlib.pyplot as plt
 import json
 from pycocotools.coco import COCO
 from os import path
+from numpy import matlib
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 nModules = 2
 nFeats = 256
@@ -95,6 +97,11 @@ class myImageDataset_COCO(data.Dataset):
                     draw_skeleton.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
                                        'rgb({}, {}, {})'.format(1, 1, 1))
         del draw_skeleton
+        data_argument = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.RandomHorizontalFlip()
+        ])
+        image_after_arg = data_argument(image_after)
         return image_after, torch.Tensor(np.array(Gauss_map)).long(), torch.Tensor(
             np.array(Label_map_skeleton)).long()
 
