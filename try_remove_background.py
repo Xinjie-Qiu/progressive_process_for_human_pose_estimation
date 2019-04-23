@@ -37,14 +37,14 @@ nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton + 1
 nOutChannels_2 = nKeypoint
 epochs = 50
-batch_size = 32
+batch_size = 16
 keypoints = 17
 skeleton = 20
 
 threshold = 0.8
 
-mode = 'test'
-save_model_name = 'params_6_aspp.pkl'
+mode = 'train'
+save_model_name = 'params_1_remove_background.pkl'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -112,6 +112,13 @@ class myImageDataset_COCO(data.Dataset):
         draw_background = ImageDraw.Draw(Label_map_background)
 
         for label in labels:
+            try:
+                segment = label['segmentation'][0]
+                seg_x = np.multiply(segment[0::2], 64 / w)
+                seg_y = np.multiply(segment[1::2], 64 / h)
+                draw_background.polygon(np.stack([seg_x, seg_y], axis=1).reshape([-1]).tolist(), fill='#010101')
+            except KeyError:
+                pass
             sks = np.array(self.anno.loadCats(label['category_id'])[0]['skeleton']) - 1
             kp = np.array(label['keypoints'])
             x = np.array(kp[0::3] / w * 64).astype(np.int)
@@ -137,8 +144,6 @@ class myImageDataset_COCO(data.Dataset):
                     # draw_keypoints.point(np.array([x[k], y[k]]).tolist(), 'rgb({}, {}, {})'.format(k + 1, k + 1, k + 1))
             for i, sk in enumerate(sks):
                 if np.all(v[sk] > 0):
-                    draw_background.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
-                                         'rgb({}, {}, {})'.format(1, 1, 1))
                     draw_skeleton.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
                                        'rgb({}, {}, {})'.format(i + 1, i + 1, i + 1))
         del draw_skeleton, draw_background
@@ -269,7 +274,7 @@ class creatModel(nn.Module):
         self.residual4 = ResidualBlock(nFeats, nFeats)
         self.lin = lin(nFeats, nFeats)
         self.conv2_0 = nn.Conv2d(nFeats, nOutChannels_0, 1, 1, 0, bias=False)
-        self.conv4_0 = nn.Conv2d(2 * nFeats + nOutChannels_0, nFeats, 1, 1, 0)
+        self.conv4_0 = nn.Conv2d(nFeats + nOutChannels_0, nFeats, 1, 1, 0)
         self.conv2_1 = nn.Conv2d(nFeats, nOutChannels_1, 1, 1, 0, bias=False)
         self.conv4_1 = nn.Conv2d(2 * nFeats + nOutChannels_1, nFeats, 1, 1, 0, bias=False)
         self.conv2_2 = nn.Conv2d(nFeats, nOutChannels_2, 1, 1, 0, bias=False)
@@ -291,7 +296,7 @@ class creatModel(nn.Module):
             if i == 0:
                 tmpOut = self.conv2_0(ll)
                 out.insert(i, tmpOut)
-                ll_ = torch.cat([inter, ll, tmpOut], dim=1)
+                ll_ = torch.cat([inter, ll], dim=1)
                 inter = self.conv4_0(ll_)
             elif i == 1:
                 tmpOut = self.conv2_1(ll)
@@ -329,7 +334,7 @@ def main():
             myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size,
             shuffle=True, num_workers=16)
         opt = torch.optim.Adam(model.parameters(), lr=1e-4)
-        model, opt = amp.initialize(model, opt, opt_level="O1")
+        # model, opt = amp.initialize(model, opt, opt_level="O1")
         model.train()
         # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', patience=10)
         # imgLoader_eval_coco = data.DataLoader(
@@ -361,9 +366,9 @@ def main():
                 loss_3 = loss3_keypoints.forward(result[2], by_keypoints)
                 losses = loss_1 + loss_2 + loss_3
                 opt.zero_grad()
-                with amp.scale_loss(losses, opt) as scaled_loss:
-                    scaled_loss.backward()
-                # losses.backward()
+                # with amp.scale_loss(losses, opt) as scaled_loss:
+                #     scaled_loss.backward()
+                losses.backward()
                 opt.step()
                 # scheduler.step(losses)
                 if i % 50 == 0:
@@ -453,7 +458,7 @@ def main():
                 plt.show()
 
         elif test_mode == 'test':
-            image = Image.open('test_img/im5.png').resize([256, 256])
+            image = Image.open('test_img/im1.jpg').resize([256, 256])
             image_normalize = (mytransform(image)).unsqueeze(0).cuda().half()
             result = model.forward(image_normalize)
             # accuracy = pckh(result[3], label.cuda().half())
