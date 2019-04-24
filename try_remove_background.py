@@ -37,13 +37,13 @@ nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton + 1
 nOutChannels_2 = nKeypoint
 epochs = 50
-batch_size = 16
+batch_size = 32
 keypoints = 17
 skeleton = 20
 
 threshold = 0.8
 
-mode = 'train'
+mode = 'test'
 save_model_name = 'params_1_remove_background.pkl'
 
 train_set = 'train_set.txt'
@@ -274,7 +274,7 @@ class creatModel(nn.Module):
         self.residual4 = ResidualBlock(nFeats, nFeats)
         self.lin = lin(nFeats, nFeats)
         self.conv2_0 = nn.Conv2d(nFeats, nOutChannels_0, 1, 1, 0, bias=False)
-        self.conv4_0 = nn.Conv2d(nFeats + nOutChannels_0, nFeats, 1, 1, 0)
+        self.conv4_0 = nn.Conv2d(2 * nFeats, nFeats, 1, 1, 0)
         self.conv2_1 = nn.Conv2d(nFeats, nOutChannels_1, 1, 1, 0, bias=False)
         self.conv4_1 = nn.Conv2d(2 * nFeats + nOutChannels_1, nFeats, 1, 1, 0, bias=False)
         self.conv2_2 = nn.Conv2d(nFeats, nOutChannels_2, 1, 1, 0, bias=False)
@@ -297,6 +297,10 @@ class creatModel(nn.Module):
                 tmpOut = self.conv2_0(ll)
                 out.insert(i, tmpOut)
                 ll_ = torch.cat([inter, ll], dim=1)
+                try:
+                    ll_ = torch.mul(ll_, torch.argmax(tmpOut[:, :, :, :], dim=1).view([tmpOut.shape[0], 1, tmpOut.shape[2], tmpOut.shape[3]]).float())
+                except RuntimeError:
+                    print('sdfe')
                 inter = self.conv4_0(ll_)
             elif i == 1:
                 tmpOut = self.conv2_1(ll)
@@ -334,12 +338,13 @@ def main():
             myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size,
             shuffle=True, num_workers=16)
         opt = torch.optim.Adam(model.parameters(), lr=1e-4)
-        # model, opt = amp.initialize(model, opt, opt_level="O1")
+        model, opt = amp.initialize(model, opt, opt_level="O1")
         model.train()
         # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', patience=10)
         # imgLoader_eval_coco = data.DataLoader(
         #     myImageDataset_COCO(eval_set_coco, eval_image_dir_coco, transform=mytransform), batch_size=batch_size,
         #     shuffle=True, num_workers=4)
+
         if retrain or not os.path.isfile(save_model_name):
             epoch = 0
         else:
@@ -352,6 +357,7 @@ def main():
             loss2_epoch_array = state['loss2']
             loss3_epoch_array = state['loss3']
             step_epoch_array = state['step']
+
         while epoch <= epochs:
             loss_record_array = []
             loss1_record_array = []
@@ -366,9 +372,9 @@ def main():
                 loss_3 = loss3_keypoints.forward(result[2], by_keypoints)
                 losses = loss_1 + loss_2 + loss_3
                 opt.zero_grad()
-                # with amp.scale_loss(losses, opt) as scaled_loss:
-                #     scaled_loss.backward()
-                losses.backward()
+                with amp.scale_loss(losses, opt) as scaled_loss:
+                    scaled_loss.backward()
+                # losses.backward()
                 opt.step()
                 # scheduler.step(losses)
                 if i % 50 == 0:

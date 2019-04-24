@@ -21,6 +21,7 @@ from torch.autograd import Variable
 from torchviz import make_dot
 from apex import amp
 import matplotlib
+from torch.nn.modules import loss
 
 matplotlib.use('TkAgg')
 
@@ -44,7 +45,7 @@ skeleton = 20
 threshold = 0.8
 
 mode = 'test'
-save_model_name = 'params_5_aspp.pkl'
+save_model_name = 'params_1_costomer_loss.pkl'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -112,6 +113,13 @@ class myImageDataset_COCO(data.Dataset):
         draw_background = ImageDraw.Draw(Label_map_background)
 
         for label in labels:
+            try:
+                segment = label['segmentation'][0]
+                seg_x = np.multiply(segment[0::2], 64 / w)
+                seg_y = np.multiply(segment[1::2], 64 / h)
+                draw_background.polygon(np.stack([seg_x, seg_y], axis=1).reshape([-1]).tolist(), fill='#010101')
+            except KeyError:
+                pass
             sks = np.array(self.anno.loadCats(label['category_id'])[0]['skeleton']) - 1
             kp = np.array(label['keypoints'])
             x = np.array(kp[0::3] / w * 64).astype(np.int)
@@ -137,14 +145,28 @@ class myImageDataset_COCO(data.Dataset):
                     # draw_keypoints.point(np.array([x[k], y[k]]).tolist(), 'rgb({}, {}, {})'.format(k + 1, k + 1, k + 1))
             for i, sk in enumerate(sks):
                 if np.all(v[sk] > 0):
-                    draw_background.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
-                                         'rgb({}, {}, {})'.format(1, 1, 1))
                     draw_skeleton.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
                                        'rgb({}, {}, {})'.format(i + 1, i + 1, i + 1))
         del draw_skeleton, draw_background
         return image_after, torch.Tensor(np.array(Gauss_map)), torch.Tensor(
             np.array(Label_map_skeleton)).long(), torch.Tensor(
             np.array(Label_map_background)).long()
+
+
+class Costomer_CrossEntropyLoss(loss._WeightedLoss):
+
+    def __init__(self, weight=None, size_average=None, ignore_index=-100,
+                 reduce=None, reduction='mean'):
+        super(Costomer_CrossEntropyLoss, self).__init__(weight, size_average, reduce, reduction)
+        self.ignore_index = ignore_index
+
+    def forward(self, input, target):
+        loss = F.nll_loss(F.log_softmax(input), target, reduce=False)
+        fraction = 0.25
+        k = input.shape[2] * input.shape[3] * fraction
+        loss, _ = torch.topk(loss.view(batch_size, -1), int(k))
+        loss = loss.mean(dim=1).sum()
+        return loss
 
 
 class _ASPPModule(nn.Module):
@@ -269,7 +291,7 @@ class creatModel(nn.Module):
         self.residual4 = ResidualBlock(nFeats, nFeats)
         self.lin = lin(nFeats, nFeats)
         self.conv2_0 = nn.Conv2d(nFeats, nOutChannels_0, 1, 1, 0, bias=False)
-        self.conv4_0 = nn.Conv2d(2 * nFeats + nOutChannels_0, nFeats, 1, 1, 0)
+        self.conv4_0 = nn.Conv2d(2 * nFeats, nFeats, 1, 1, 0)
         self.conv2_1 = nn.Conv2d(nFeats, nOutChannels_1, 1, 1, 0, bias=False)
         self.conv4_1 = nn.Conv2d(2 * nFeats + nOutChannels_1, nFeats, 1, 1, 0, bias=False)
         self.conv2_2 = nn.Conv2d(nFeats, nOutChannels_2, 1, 1, 0, bias=False)
@@ -291,7 +313,11 @@ class creatModel(nn.Module):
             if i == 0:
                 tmpOut = self.conv2_0(ll)
                 out.insert(i, tmpOut)
-                ll_ = torch.cat([inter, ll, tmpOut], dim=1)
+                ll_ = torch.cat([inter, ll], dim=1)
+                try:
+                    ll_ = torch.mul(ll_, torch.argmax(tmpOut[:, :, :, :], dim=1).view([tmpOut.shape[0], 1, tmpOut.shape[2], tmpOut.shape[3]]).float())
+                except RuntimeError:
+                    print('sdfe')
                 inter = self.conv4_0(ll_)
             elif i == 1:
                 tmpOut = self.conv2_1(ll)
@@ -312,8 +338,8 @@ def main():
         ])
         model = creatModel()
         model.cuda()
-        loss1_background = nn.CrossEntropyLoss().cuda()
-        loss2_skeleton = nn.CrossEntropyLoss().cuda()
+        loss1_background = Costomer_CrossEntropyLoss().cuda()
+        loss2_skeleton = Costomer_CrossEntropyLoss().cuda()
         loss3_keypoints = nn.MSELoss().cuda()
         loss_epoch_array = []
         loss1_epoch_array = []
@@ -335,6 +361,7 @@ def main():
         # imgLoader_eval_coco = data.DataLoader(
         #     myImageDataset_COCO(eval_set_coco, eval_image_dir_coco, transform=mytransform), batch_size=batch_size,
         #     shuffle=True, num_workers=4)
+
         if retrain or not os.path.isfile(save_model_name):
             epoch = 0
         else:
@@ -347,6 +374,7 @@ def main():
             loss2_epoch_array = state['loss2']
             loss3_epoch_array = state['loss3']
             step_epoch_array = state['step']
+
         while epoch <= epochs:
             loss_record_array = []
             loss1_record_array = []
@@ -453,7 +481,7 @@ def main():
                 plt.show()
 
         elif test_mode == 'test':
-            image = Image.open('test_img/im5.png').resize([256, 256])
+            image = Image.open('test_img/im1.jpg').resize([256, 256])
             image_normalize = (mytransform(image)).unsqueeze(0).cuda().half()
             result = model.forward(image_normalize)
             # accuracy = pckh(result[3], label.cuda().half())
