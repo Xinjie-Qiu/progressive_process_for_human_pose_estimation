@@ -14,8 +14,8 @@ from os import path
 import math
 import torch.nn.functional as F
 from scipy import ndimage
-import pydensecrf.densecrf as dcrf
-import pydensecrf.utils as utils
+# import pydensecrf.densecrf as dcrf
+# import pydensecrf.utils as utils
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
