@@ -44,7 +44,7 @@ skeleton = 20
 
 threshold = 0.8
 
-mode = 'train'
+mode = 'test'
 save_model_name = 'params_1_remove_background_separite_skeleton.pkl'
 
 train_set = 'train_set.txt'
@@ -345,7 +345,7 @@ class creatModel(nn.Module):
 
         out.insert(i, tmpOut)
         i = 1
-        x = torch.mul(x, torch.argmax(tmpOut[:, :, :, :], dim=1).view([tmpOut.shape[0], 1, tmpOut.shape[2], tmpOut.shape[3]]).float())
+        x = torch.mul(x, torch.argmax(tmpOut[:, :, :, :], dim=1).view([tmpOut.shape[0], 1, tmpOut.shape[2], tmpOut.shape[3]]).float().half())
 
         inter = x
         ll = self.stage2(inter)
