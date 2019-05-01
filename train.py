@@ -609,7 +609,7 @@ class creatModel(nn.Module):
 
 def main():
     if mode == 'train':
-        writer = SummaryWriter('runs' + save_model_name)
+        writer = SummaryWriter('runs/' + save_model_name)
         model = creatModel()
         model.cuda()
         loss1_background = Costomer_CrossEntropyLoss().cuda()
@@ -657,7 +657,7 @@ def main():
                     writer.add_scalar('Loss', loss_record, steps)
                     writer.add_scalar('Loss_1', loss1_record, steps)
                     writer.add_scalar('Loss_2', loss2_record, steps)
-                    writer.add_scalar('Loss_2', loss3_record, steps)
+                    writer.add_scalar('Loss_3', loss3_record, steps)
 
                     print('[{}/{}][{}/{}] Loss: {} Loss_1: {} Loss_2: {} Loss_3: {}'.format(
                         epoch, epochs, i, len(imgLoader_train_coco), loss_record,
