@@ -22,6 +22,7 @@ from torchviz import make_dot
 from apex import amp
 import matplotlib
 from torch.nn.modules import loss
+from skimage.feature import peak_local_max
 
 matplotlib.use('TkAgg')
 
@@ -44,8 +45,8 @@ skeleton = 20
 
 threshold = 0.8
 
-mode = 'test'
-save_model_name = 'params_1_remove_background_separite_skeleton.pkl'
+mode = 'train'
+save_model_name = 'params_1_try_data_argument'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -153,6 +154,50 @@ class myImageDataset_COCO(data.Dataset):
             np.array(Label_map_background)).long()
 
 
+# class myImageDataset(data.Dataset):
+#     def __init__(self, imagedir, matdir, transform=None, dim=(256, 256), n_channels=3,
+#                  n_joints=14):
+#         'Initialization'
+#         self.mat = scipy.io.loadmat(matdir)
+#         self.dim = dim
+#         os.listdir(imagedir)
+#         self.n_channels = n_channels
+#         self.n_joints = n_joints
+#         self.transform = transform
+#
+#     def __len__(self):
+#         return len(self.list)
+#
+#     def __getitem__(self, index):
+#         image = Image.open((rootdir + self.list[index]).strip()).convert('RGB')
+#         w, h = image.size
+#         image = image.resize([256, 256])
+#         if self.transform is not None:
+#             image = self.transform(image)
+#
+#         number = int(self.list[index][2:6]) - 1
+#         Gauss_map = np.zeros([14, 64, 64])
+#         for k in range(14):
+#             xs = self.mat['joints'][0][k][number] / w * 64
+#             ys = self.mat['joints'][1][k][number] / h * 64
+#             sigma = 1
+#             mask_x = np.matlib.repmat(xs, 64, 64)
+#             mask_y = np.matlib.repmat(ys, 64, 64)
+#
+#             x1 = np.arange(64)
+#             x_map = np.matlib.repmat(x1, 64, 1)
+#
+#             y1 = np.arange(64)
+#             y_map = np.matlib.repmat(y1, 64, 1)
+#             y_map = np.transpose(y_map)
+#
+#             temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
+#
+#             Gauss_map[k, :, :] = np.exp(-temp)
+#
+#         return image, torch.Tensor(Gauss_map)
+
+
 class Costomer_CrossEntropyLoss(loss._WeightedLoss):
 
     def __init__(self, weight=None, size_average=None, ignore_index=-100,
@@ -193,7 +238,8 @@ class Costomer_MSELoss_with_mask(loss._WeightedLoss):
 
     def forward(self, input, target, mask):
         loss = F.mse_loss(input, target, reduce=False)
-        loss = torch.mul(loss, mask.float().view([mask.shape[0], 1, mask.shape[1], mask.shape[2]])).view([loss.shape[0], -1])
+        loss = torch.mul(loss, mask.float().view([mask.shape[0], 1, mask.shape[1], mask.shape[2]])).view(
+            [loss.shape[0], -1])
         loss = loss.sum(dim=1).mean()
         return loss
 
@@ -345,7 +391,8 @@ class creatModel(nn.Module):
 
         out.insert(i, tmpOut)
         i = 1
-        x = torch.mul(x, torch.argmax(tmpOut[:, :, :, :], dim=1).view([tmpOut.shape[0], 1, tmpOut.shape[2], tmpOut.shape[3]]).float().half())
+        x = torch.mul(x, torch.argmax(tmpOut[:, :, :, :], dim=1).view(
+            [tmpOut.shape[0], 1, tmpOut.shape[2], tmpOut.shape[3]]).float().half())
 
         inter = x
         ll = self.stage2(inter)
@@ -416,7 +463,7 @@ def main():
             for i, [x_, y_keypoints, y_skeleton, y_background] in enumerate(imgLoader_train_coco, 0):
                 bx_, by_keypoints, by_skeleton, by_background = x_.cuda(), y_keypoints.cuda(), y_skeleton.cuda(), y_background.cuda()
                 result = model(bx_)
-                loss_1 = loss1_background.forward(result[0], by_background, (100 - epoch)/100)
+                loss_1 = loss1_background.forward(result[0], by_background, (100 - epoch) / 100)
                 loss_2 = loss2_skeleton.forward(result[1], by_skeleton, torch.argmax(result[0], dim=1))
                 loss_3 = loss3_keypoints.forward(result[2], by_keypoints, torch.argmax(result[0], dim=1))
                 losses = loss_1 + loss_2 + loss_3
@@ -503,9 +550,9 @@ def main():
                     # for i in range(38):
                     #     x = result[0, i, :, :]
                     #     ys, xs = np.multiply(np.where(x == np.max(x)), 4)
-                    width = 5
-                    draw.ellipse([xs - width, ys - width, xs + width, ys + width], fill=(0, 255, 0),
-                                 outline=(255, 0, 0))
+                    # width = 5
+                    # draw.ellipse([xs - width, ys - width, xs + width, ys + width], fill=(0, 255, 0),
+                    #              outline=(255, 0, 0))
 
                 del draw
                 plt.subplot(3, 1, 3)
@@ -543,10 +590,17 @@ def main():
                 plt.subplot(3, 9, i + 1)
                 result_print = results[0, i, :, :]
 
-                # y_point, x_point = np.multiply(np.where(result_print == np.max(result)), 4)
+                peak_value = peak_local_max(result_print, min_distance=15)
+
+                y_point = peak_value[:, 0] * 4
+                x_point = peak_value[:, 1] * 4
                 plt.imshow(result_print)
-                # width = 2
-                # draw.ellipse([x_point - width, y_point - width, x_point + width, y_point + width], fill=(int(255/17*i), int(255/17*i), int(255/17*i)), outline=(int(255/17*i), int(255/17*i), int(255/17*i)))
+
+                width = 2
+                for j in range(len(x_point)):
+                    draw.ellipse([x_point[j] - width, y_point[j] - width, x_point[j] + width, y_point[j] + width],
+                                 fill=(int(255 / 17 * i), int(255 / 17 * i), int(255 / 17 * i)),
+                                 outline=(int(255 / 17 * i), int(255 / 17 * i), int(255 / 17 * i)))
 
             del draw
             plt.subplot(3, 1, 3)
