@@ -27,7 +27,7 @@ matplotlib.use('TkAgg')
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 nModules = 2
 nFeats = 256
@@ -521,18 +521,20 @@ def main():
             results = result[0].cpu().float().data.numpy()
             # image = (image.cpu().float().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
             # image = Image.fromarray(image)
+            results = result[0].cpu().float().data.numpy()
             plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)  # 调整子图间距
             draw = ImageDraw.Draw(image)
             plt.subplot(1, 2, 1)
             plt.imshow(image)
             plt.subplot(1, 2, 2)
-            plt.imshow(results[0, 1, :, :])
+            mask = np.argmax(results[0, :, :, :], axis=0)
+            plt.imshow(mask)
             plt.show()
             plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)
             results = result[1].cpu().float().data.numpy()
             for i in range(nOutChannels_1):
                 plt.subplot(3, int(nOutChannels_1 / 2), i + 1)
-                result_print = results[0, i, :, :]
+                result_print = np.maximum(np.multiply(results[0, i, :, :], mask), 0)
                 plt.imshow(result_print)
             plt.subplot(3, 1, 3)
             plt.imshow(image)
@@ -541,7 +543,7 @@ def main():
             results = result[2].cpu().float().data.numpy()
             for i in range(17):
                 plt.subplot(3, 9, i + 1)
-                result_print = results[0, i, :, :]
+                result_print = np.maximum(np.multiply(results[0, i, :, :], mask), 0)
 
                 # y_point, x_point = np.multiply(np.where(result_print == np.max(result)), 4)
                 plt.imshow(result_print)
