@@ -27,7 +27,7 @@ matplotlib.use('TkAgg')
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0 "
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 nModules = 2
 nFeats = 256
@@ -37,15 +37,15 @@ nSkeleton = 19
 nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton + 1
 nOutChannels_2 = nKeypoint
-epochs = 100
+epochs = 50
 batch_size = 32
 keypoints = 17
 skeleton = 20
 
 threshold = 0.8
 
-mode = 'train'
-save_model_name = 'params_1_remove_background_and_costomer_loss.pkl'
+mode = 'test'
+save_model_name = 'params_1_remove_background_separite_skeleton.pkl'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -311,51 +311,54 @@ class lin(nn.Module):
 class creatModel(nn.Module):
     def __init__(self):
         super(creatModel, self).__init__()
-        self.conv1 = nn.Conv2d(3, 64, 7, 2, 3)
-        self.relu = nn.ReLU()
-        self.residual1 = ResidualBlock(64, 128, stride=2)
-        self.residual2 = ResidualBlock(128, 128)
-        self.residual3 = ResidualBlock(128, nFeats)
-        self.hourglass1 = hourglass(4, nFeats)
-        self.residual4 = ResidualBlock(nFeats, nFeats)
-        self.lin = lin(nFeats, nFeats)
-        self.conv2_0 = nn.Conv2d(nFeats, nOutChannels_0, 1, 1, 0, bias=False)
-        self.conv4_0 = nn.Conv2d(2 * nFeats, nFeats, 1, 1, 0)
-        self.conv2_1 = nn.Conv2d(nFeats, nOutChannels_1, 1, 1, 0, bias=False)
-        self.conv4_1 = nn.Conv2d(2 * nFeats + nOutChannels_1, nFeats, 1, 1, 0, bias=False)
-        self.conv2_2 = nn.Conv2d(nFeats, nOutChannels_2, 1, 1, 0, bias=False)
+        self.preprocess1 = nn.Sequential(
+            nn.Conv2d(3, 64, 7, 2, 3),
+            nn.ReLU(),
+            ResidualBlock(64, 128, stride=2),
+            ResidualBlock(128, 128),
+            ResidualBlock(128, nFeats)
+        )
+        self.stage1 = nn.Sequential(
+            hourglass(4, nFeats),
+            ResidualBlock(nFeats, nFeats),
+        )
+
+        self.stage1_out = nn.Conv2d(nFeats, nOutChannels_0, 1, 1, 0, bias=False)
+        self.stage2 = nn.Sequential(
+            hourglass(4, nFeats),
+            ResidualBlock(nFeats, nFeats),
+        )
+        self.stage2_out = nn.Conv2d(nFeats, nOutChannels_1, 1, 1, 0, bias=False)
+        self.stage2_return = nn.Conv2d(2 * nFeats + nOutChannels_1, nFeats, 1, 1, 0, bias=False)
+        self.stage3 = nn.Sequential(
+            hourglass(4, nFeats),
+            ResidualBlock(nFeats, nFeats),
+        )
+        self.stage3_out = nn.Conv2d(nFeats, nOutChannels_2, 1, 1, 0, bias=False)
 
     def forward(self, x):
-        x = self.conv1(x)
-        x = self.relu(x)
-        x = self.residual1(x)
-        x = self.residual2(x)
-        x = self.residual3(x)
-
+        i = 0
+        x = self.preprocess1(x)
         out = []
+        ll = self.stage1(x)
+        tmpOut = self.stage1_out(ll)
+
+        out.insert(i, tmpOut)
+        i = 1
+        x = torch.mul(x, torch.argmax(tmpOut[:, :, :, :], dim=1).view([tmpOut.shape[0], 1, tmpOut.shape[2], tmpOut.shape[3]]).float().half())
+
         inter = x
-        for i in range(nStack):
-            hg = self.hourglass1(inter)
-            ll = hg
-            ll = self.residual4(ll)
-            ll = self.lin(ll)
-            if i == 0:
-                tmpOut = self.conv2_0(ll)
-                out.insert(i, tmpOut)
-                ll_ = torch.cat([inter, ll], dim=1)
-                try:
-                    ll_ = torch.mul(ll_, torch.argmax(tmpOut[:, :, :, :], dim=1).view([tmpOut.shape[0], 1, tmpOut.shape[2], tmpOut.shape[3]]).float())
-                except RuntimeError:
-                    print('sdfe')
-                inter = self.conv4_0(ll_)
-            elif i == 1:
-                tmpOut = self.conv2_1(ll)
-                out.insert(i, tmpOut)
-                ll_ = torch.cat([inter, ll, tmpOut], dim=1)
-                inter = self.conv4_1(ll_)
-            elif i == 2:
-                tmpOut = self.conv2_2(ll)
-                out.insert(i, tmpOut)
+        ll = self.stage2(inter)
+        tmpOut = self.stage2_out(ll)
+
+        out.insert(i, tmpOut)
+        ll_ = torch.cat([inter, ll, tmpOut], dim=1)
+        inter = self.stage2_return(ll_)
+        i = 2
+        ll = self.stage3(inter)
+        tmpOut = self.stage3_out(ll)
+        out.insert(i, tmpOut)
+
         return out
 
 
