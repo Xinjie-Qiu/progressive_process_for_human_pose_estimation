@@ -16,13 +16,11 @@ import torch.nn.functional as F
 from scipy import ndimage
 from numpy import matlib
 from torch.optim import lr_scheduler
-from graphviz import Digraph
-from torch.autograd import Variable
-from torchviz import make_dot
 from apex import amp
 import matplotlib
 from torch.nn.modules import loss
 from skimage.feature import peak_local_max
+from tensorboardX import SummaryWriter
 
 matplotlib.use('TkAgg')
 
@@ -411,6 +409,7 @@ class creatModel(nn.Module):
 
 def main():
     if mode == 'train':
+        writer = SummaryWriter('runs' + save_model_name)
         mytransform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
