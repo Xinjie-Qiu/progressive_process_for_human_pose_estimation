@@ -38,7 +38,7 @@ nSkeleton = 19
 nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton + 1
 nOutChannels_2 = nKeypoint
-epochs = 50
+epochs = 100
 batch_size = 32
 keypoints = 17
 skeleton = 20
@@ -46,7 +46,7 @@ inputsize = 256
 
 threshold = 0.8
 
-mode = 'train'
+mode = 'test'
 save_model_name = 'params_1_stable_try_data_argument'
 
 train_set = 'train_set.txt'
@@ -682,7 +682,6 @@ def main():
         state = torch.load(save_model_name)
         model.load_state_dict(state['state_dict'])
         epoch = state['epoch']
-        loss_array = state['loss']
         test_mode = 'test'
         if test_mode == 'coco':
 
@@ -718,7 +717,7 @@ def main():
                 plt.show()
 
         elif test_mode == 'test':
-            image = Image.open('test_img/im1.jpg').resize([256, 256])
+            image = Image.open('test_img/im2.jpg').resize([256, 256])
             image_normalize = (mytransform(image)).unsqueeze(0).cuda().half()
             result = model.forward(image_normalize)
             # accuracy = pckh(result[3], label.cuda().half())
