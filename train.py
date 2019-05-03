@@ -46,7 +46,7 @@ inputsize = 256
 
 threshold = 0.8
 
-mode = 'train'
+mode = 'test'
 save_model_name = 'params_1_stable_try_aspp'
 
 train_set = 'train_set.txt'
@@ -563,6 +563,74 @@ class creatModel(nn.Module):
         return out
 
 
+# coco -> lsp
+# 0 -> 13
+# 5 + 6 -> 12
+# 9 -> 11
+# 7 -> 10
+# 5 -> 9
+# 6 -> 8
+# 8 -> 7
+# 10 -> 6
+# 15 -> 5
+# 13 -> 4
+# 11 -> 3
+# 12 -> 2
+# 14 -> 1
+# 16 -> 0
+
+def COCO_to_LSP(input):
+    input = torch.Tensor(input)
+    result = torch.zeros(input.shape[0], 14, input.shape[2], input.shape[3])
+    result[:, 0, :, :] = input[:, 16, :, :]
+    result[:, 1, :, :] = input[:, 14, :, :]
+    result[:, 2, :, :] = input[:, 12, :, :]
+    result[:, 3, :, :] = input[:, 11, :, :]
+    result[:, 4, :, :] = input[:, 13, :, :]
+    result[:, 5, :, :] = input[:, 15, :, :]
+    result[:, 6, :, :] = input[:, 10, :, :]
+    result[:, 7, :, :] = input[:, 8, :, :]
+    result[:, 8, :, :] = input[:, 6, :, :]
+    result[:, 9, :, :] = input[:, 5, :, :]
+    result[:, 10, :, :] = input[:, 7, :, :]
+    result[:, 11, :, :] = input[:, 9, :, :]
+    result[:, 12, :, :] = torch.mul(input[:, 5, :, :] + input[:, 6, :, :], 0.5)
+    result[:, 13, :, :] = input[:, 0, :, :]
+
+    return result
+
+
+class PCKh(nn.Module):
+    def __init__(self):
+        super(PCKh, self).__init__()
+
+    def forward(self, x, target):
+        correct = 0
+        total = 0
+        for i in range(batch_size):
+            head_heat_map = target[i, 13, :, :]
+            head_ys = torch.max(torch.max(head_heat_map, 1)[0], 0)[1]
+            head_xs = torch.max(head_heat_map, 1)[1][head_ys]
+            neck_heat_map = target[i, 1, :, :]
+            neck_ys = torch.max(torch.max(neck_heat_map, 1)[0], 0)[1]
+            neck_xs = torch.max(neck_heat_map, 1)[1][neck_ys]
+            standard = torch.sqrt((torch.pow(head_ys - neck_ys, 2) + torch.pow(head_xs - neck_xs, 2)).float()) / 2
+            for j in range(14):
+                label_heat_map = target[i, j, :, :]
+                if torch.max(label_heat_map) == 0:
+                    continue
+                label_ys = torch.max(torch.max(label_heat_map, 1)[0], 0)[1]
+                label_xs = torch.max(label_heat_map, 1)[1][head_ys]
+                predict_heat_map = x[i, j, :, :]
+                predict_ys = torch.max(torch.max(predict_heat_map, 1)[0], 0)[1]
+                predict_xs = torch.max(label_heat_map, 1)[1][head_ys]
+                if torch.sqrt(
+                        (torch.pow(label_ys - predict_ys, 2) + torch.pow(label_xs - predict_xs, 2)).float()) < standard:
+                    correct += 1
+                total += 1
+        return correct / total
+
+
 def main():
     if mode == 'train':
         writer = SummaryWriter('runs/' + save_model_name)
@@ -634,7 +702,7 @@ def main():
             transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
         ])
         model = creatModel()
-        model.cuda().half()
+        model.eval().cuda().half()
         state = torch.load(save_model_name)
         model.load_state_dict(state['state_dict'])
         epoch = state['epoch']
@@ -678,6 +746,7 @@ def main():
             result = model.forward(image_normalize)
             # image = (image.cpu().float().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
             # image = Image.fromarray(image)
+
             results = result[0].cpu().float().data.numpy()
             plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)  # 调整子图间距
             draw = ImageDraw.Draw(image)
@@ -698,6 +767,7 @@ def main():
             plt.show()
             plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)
             results = result[2].cpu().float().data.numpy()
+            COCO_to_LSP(results)
             for i in range(17):
                 plt.subplot(3, 9, i + 1)
                 result_print = np.maximum(np.multiply(results[0, i, :, :], mask), 0)
