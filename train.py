@@ -324,78 +324,6 @@ class myImageDataset_COCO(data.Dataset):
             np.array(Label_map_background)).long()
 
 
-# class myImageDataset_COCO(data.Dataset):
-#     def __init__(self, anno, image_dir, transform=None):
-#         'Initialization'
-#         self.anno = COCO(anno)
-#         self.image_dir = image_dir
-#         self.lists = self.anno.getImgIds(catIds=self.anno.getCatIds())
-#         self.transform = transform
-#
-#     def __len__(self):
-#         return len(self.lists)
-#         # return 100
-#
-#     def __getitem__(self, index):
-#         list = self.lists[index]
-#         image_name = self.anno.loadImgs(list)[0]['file_name']
-#         image_path = path.join(self.image_dir, image_name)
-#         image = Image.open(image_path)
-#         image = image.convert('RGB')
-#         w, h = image.size
-#         image = image.resize([256, 256])
-#         if self.transform is not None:
-#             image_after = self.transform(image)
-#         label_id = self.anno.getAnnIds(list)
-#         labels = self.anno.loadAnns(label_id)
-#         Label_map_skeleton = np.zeros([64, 64])
-#         Label_map_skeleton = Image.fromarray(Label_map_skeleton, 'L')
-#         Label_map_background = np.zeros([64, 64])
-#         Label_map_background = Image.fromarray(Label_map_background, 'L')
-#         draw_skeleton = ImageDraw.Draw(Label_map_skeleton)
-#         draw_background = ImageDraw.Draw(Label_map_background)
-#
-#         for label in labels:
-#             try:
-#                 segment = label['segmentation'][0]
-#                 seg_x = np.multiply(segment[0::2], 64 / w)
-#                 seg_y = np.multiply(segment[1::2], 64 / h)
-#                 draw_background.polygon(np.stack([seg_x, seg_y], axis=1).reshape([-1]).tolist(), fill='#010101')
-#             except KeyError:
-#                 pass
-#             sks = np.array(self.anno.loadCats(label['category_id'])[0]['skeleton']) - 1
-#             kp = np.array(label['keypoints'])
-#             x = np.array(kp[0::3] / w * 64).astype(np.int)
-#             y = np.array(kp[1::3] / h * 64).astype(np.int)
-#             v = kp[2::3]
-#             Gauss_map = np.zeros([17, 64, 64])
-#             for k in range(keypoints):
-#                 if v[k] > 0:
-#                     sigma = 1
-#                     mask_x = np.matlib.repmat(x[k], 64, 64)
-#                     mask_y = np.matlib.repmat(y[k], 64, 64)
-#
-#                     x1 = np.arange(64)
-#                     x_map = np.matlib.repmat(x1, 64, 1)
-#
-#                     y1 = np.arange(64)
-#                     y_map = np.matlib.repmat(y1, 64, 1)
-#                     y_map = np.transpose(y_map)
-#
-#                     temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
-#
-#                     Gauss_map[k, :, :] = np.exp(-temp)
-#                     # draw_keypoints.point(np.array([x[k], y[k]]).tolist(), 'rgb({}, {}, {})'.format(k + 1, k + 1, k + 1))
-#             for i, sk in enumerate(sks):
-#                 if np.all(v[sk] > 0):
-#                     draw_skeleton.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
-#                                        'rgb({}, {}, {})'.format(i + 1, i + 1, i + 1))
-#         del draw_skeleton, draw_background
-#         return image_after, torch.Tensor(np.array(Gauss_map)), torch.Tensor(
-#             np.array(Label_map_skeleton)).long(), torch.Tensor(
-#             np.array(Label_map_background)).long()
-
-
 class Costomer_CrossEntropyLoss(loss._WeightedLoss):
 
     def __init__(self, weight=None, size_average=None, ignore_index=-100,
@@ -442,21 +370,6 @@ class Costomer_MSELoss_with_mask(loss._WeightedLoss):
         return loss
 
 
-class _ASPPModule(nn.Module):
-    def __init__(self, inplanes, planes, kernel_size, padding, dilation):
-        super(_ASPPModule, self).__init__()
-        self.atrous_conv = nn.Conv2d(inplanes, planes, kernel_size=kernel_size,
-                                     stride=1, padding=padding, dilation=dilation, bias=False)
-        self.bn = nn.BatchNorm2d(planes)
-        self.relu = nn.ReLU()
-
-    def forward(self, x):
-        x = self.atrous_conv(x)
-        x = self.bn(x)
-
-        return self.relu(x)
-
-
 class ResidualBlock(nn.Module):
     def __init__(self, numIn, numOut, stride=1):
         super(ResidualBlock, self).__init__()
@@ -496,16 +409,24 @@ class ResidualBlock(nn.Module):
         return out
 
 
-class hourglass(nn.Module):
-    def __init__(self, n, f):
-        super(hourglass, self).__init__()
-        self.n = n
-        self.f = f
-        self.residual_block = ResidualBlock(f, f)
-        self.residual_block_stride = ResidualBlock(f, f, stride=2)
-        if n > 1:
-            self.hourglass1 = hourglass(n - 1, f)
-        self.maxpool = nn.MaxPool2d(2)
+class _ASPPModule(nn.Module):
+    def __init__(self, inplanes, planes, kernel_size, padding, dilation):
+        super(_ASPPModule, self).__init__()
+        self.atrous_conv = nn.Conv2d(inplanes, planes, kernel_size=kernel_size,
+                                     stride=1, padding=padding, dilation=dilation, bias=False)
+        self.bn = nn.BatchNorm2d(planes)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = self.atrous_conv(x)
+        x = self.bn(x)
+
+        return self.relu(x)
+
+
+class ASPP_Block(nn.Module):
+    def __init__(self):
+        super(ASPP_Block, self).__init__()
         inplanes = 256
         dilations = [1, 6, 12, 18]
         self.aspp1 = _ASPPModule(inplanes, 256, 1, padding=0, dilation=dilations[0])
@@ -517,22 +438,57 @@ class hourglass(nn.Module):
                                              nn.Conv2d(inplanes, 256, 1, stride=1, bias=False),
                                              nn.BatchNorm2d(256),
                                              nn.ReLU())
-        self.conv1 = nn.Conv2d(1280, 256, 1, bias=False)
-        self.conv2 = nn.Conv2d(2 * f, f, 1, bias=False)
-        self.conv3 = nn.Conv2d(f, f, 3, 2, 1)
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(1280, 256, 1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU()
+        )
 
     def forward(self, x):
-        up1 = x
-        low1 = self.residual_block_stride(x)
-        if self.n > 1:
-            low2 = self.hourglass1(low1)
-        else:
-            low2 = low1
-        low3 = low2
-        low3 = self.residual_block(low3)
-        up2 = nn.functional.interpolate(low3, scale_factor=2, mode='bilinear', align_corners=True)
-        out = torch.cat([up1, up2], dim=1)
+        x1 = self.aspp1(x)
+        x2 = self.aspp2(x)
+        x3 = self.aspp3(x)
+        x4 = self.aspp4(x)
+        x5 = self.global_avg_pool(x)
+        x5 = F.interpolate(x5, size=x4.size()[2:], mode='bilinear', align_corners=True)
+        x = torch.cat([x1, x2, x3, x4, x5], dim=1)
+
+        out = self.conv1(x)
+        return out
+
+
+class hourglass(nn.Module):
+    def __init__(self, f):
+        super(hourglass, self).__init__()
+        self.f = f
+
+        self.downsample1 = ResidualBlock(f, f, stride=2)
+        self.downsample2 = ResidualBlock(f, f, stride=2)
+        self.downsample3 = ResidualBlock(f, f, stride=2)
+        self.downsample4 = ResidualBlock(f, f, stride=2)
+
+        self.aspp = ASPP_Block()
+
+        self.conv4 = nn.Conv2d(2 * f, f, 1, 1, bias=False)
+        self.conv3 = nn.Conv2d(2 * f, f, 1, 1, bias=False)
+        self.conv2 = nn.Conv2d(2 * f, f, 1, 1, bias=False)
+        self.conv1 = nn.Conv2d(2 * f, f, 1, 1, bias=False)
+
+    def forward(self, x):
+        down1 = self.downsample1(x)
+        down2 = self.downsample2(down1)
+        down3 = self.downsample3(down2)
+        down4 = self.downsample4(down3)
+        out = self.aspp(down4)
+        out = F.interpolate(out, scale_factor=4)
+        out = torch.cat([out, down2])
+        out = self.conv3(out)
+        out = F.interpolate(out, scale_factor=2)
+        out = torch.cat([out, down1], dim=1)
         out = self.conv2(out)
+        out = F.interpolate(out, scale_factor=2)
+        out = torch.cat([out, x], dim=1)
+        out = self.conv1(out)
         return out
 
 
