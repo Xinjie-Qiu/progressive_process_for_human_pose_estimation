@@ -105,14 +105,62 @@ class myImageDataset_COCO(data.Dataset):
         return image_after, torch.Tensor(np.array(Gauss_map)).long(), torch.Tensor(
             np.array(Label_map_skeleton)).long()
 
+
+class myImageDataset(data.Dataset):
+    def __init__(self, imagedir, matdir, transform=None, dim=(256, 256), n_channels=3,
+                 n_joints=14):
+        'Initialization'
+        self.mat = scipy.io.loadmat(matdir)
+        self.dim = dim
+        self.imagedir = imagedir
+        self.list = os.listdir(imagedir)
+        self.n_channels = n_channels
+        self.n_joints = n_joints
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.list)
+
+    def __getitem__(self, index):
+        image = Image.open(path.join(self.imagedir, self.list[index])).convert('RGB')
+        w, h = image.size
+        image = image.resize([256, 256])
+        if self.transform is not None:
+            image = self.transform(image)
+
+        number = int(self.list[index][2:6]) - 1
+        Gauss_map = np.zeros([14, 64, 64])
+        for k in range(14):
+            xs = self.mat['joints'][0][k][number] / w * 64
+            ys = self.mat['joints'][1][k][number] / h * 64
+            sigma = 1
+            mask_x = np.matlib.repmat(xs, 64, 64)
+            mask_y = np.matlib.repmat(ys, 64, 64)
+
+            x1 = np.arange(64)
+            x_map = np.matlib.repmat(x1, 64, 1)
+
+            y1 = np.arange(64)
+            y_map = np.matlib.repmat(y1, 64, 1)
+            y_map = np.transpose(y_map)
+
+            temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
+
+            Gauss_map[k, :, :] = 1 / (2 * np.pi * sigma ** 2) * np.exp(-temp)
+
+        return image, torch.Tensor(Gauss_map)
+
+
 def main():
+    image_dir = '/data/lsp_dataset/images'
+    mat_dir = '/data/lsp_dataset/joints.mat'
     mytransform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
     ])
 
     # test = myImageDataset_COCO(train_set_coco, train_image_dir_coco)
-    test_loader = data.DataLoader(myImageDataset_COCO(train_set_coco, train_image_dir_coco, mytransform), 1, True, num_workers=1)
+    test_loader = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 1, True, num_workers=1)
     for step, [x, keypoints, skeletion] in enumerate(test_loader, 0):
         print('efds')
     print('yyy')
