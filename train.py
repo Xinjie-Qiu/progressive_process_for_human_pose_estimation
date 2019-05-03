@@ -38,7 +38,7 @@ nSkeleton = 19
 nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton + 1
 nOutChannels_2 = nKeypoint
-epochs = 100
+epochs = 50
 batch_size = 32
 keypoints = 17
 skeleton = 20
@@ -46,8 +46,8 @@ inputsize = 256
 
 threshold = 0.8
 
-mode = 'test'
-save_model_name = 'params_1_stable_try_data_argument'
+mode = 'train'
+save_model_name = 'params_1_stable_try_aspp'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -481,7 +481,7 @@ class hourglass(nn.Module):
         down4 = self.downsample4(down3)
         out = self.aspp(down4)
         out = F.interpolate(out, scale_factor=4)
-        out = torch.cat([out, down2])
+        out = torch.cat([out, down2], dim=1)
         out = self.conv3(out)
         out = F.interpolate(out, scale_factor=2)
         out = torch.cat([out, down1], dim=1)
@@ -519,19 +519,19 @@ class creatModel(nn.Module):
             ResidualBlock(128, nFeats)
         )
         self.stage1 = nn.Sequential(
-            hourglass(4, nFeats),
+            hourglass(nFeats),
             ResidualBlock(nFeats, nFeats),
         )
 
         self.stage1_out = nn.Conv2d(nFeats, nOutChannels_0, 1, 1, 0, bias=False)
         self.stage2 = nn.Sequential(
-            hourglass(4, nFeats),
+            hourglass(nFeats),
             ResidualBlock(nFeats, nFeats),
         )
         self.stage2_out = nn.Conv2d(nFeats, nOutChannels_1, 1, 1, 0, bias=False)
         self.stage2_return = nn.Conv2d(2 * nFeats + nOutChannels_1, nFeats, 1, 1, 0, bias=False)
         self.stage3 = nn.Sequential(
-            hourglass(4, nFeats),
+            hourglass(nFeats),
             ResidualBlock(nFeats, nFeats),
         )
         self.stage3_out = nn.Conv2d(nFeats, nOutChannels_2, 1, 1, 0, bias=False)
