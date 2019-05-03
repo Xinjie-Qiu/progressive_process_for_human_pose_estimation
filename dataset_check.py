@@ -14,9 +14,31 @@ from pycocotools.coco import COCO
 from os import path
 from numpy import matlib
 
+matplotlib.use('TkAgg')
+
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+# LSP dataset
+# Right ankle
+# Right knee
+# Right hip
+# Left hip
+# Left knee
+# Left ankle
+# Right wrist
+# Right elbow
+# Right shoulder
+# Left shoulder
+# Left elbow
+# Left wrist
+# Neck
+# Head top
+
+
+
+
 
 nModules = 2
 nFeats = 256
@@ -25,6 +47,8 @@ nOutChannels = 18
 epochs = 1000
 batch_size = 16
 keypoints = 17
+
+inputsize = 320
 
 mode = 'test'
 save_model_name = 'params_3_coco.pkl'
@@ -67,6 +91,10 @@ class myImageDataset_COCO(data.Dataset):
         Label_map_skeleton = np.zeros([64, 64])
         Label_map_skeleton = Image.fromarray(Label_map_skeleton, 'L')
         draw_skeleton = ImageDraw.Draw(Label_map_skeleton)
+        Label_map_keypoints = np.zeros([64, 64])
+        Label_map_keypoints = Image.fromarray(Label_map_keypoints, 'L')
+        draw_keypoints = ImageDraw.Draw(Label_map_keypoints)
+        draw = ImageDraw.Draw(image)
         for label in labels:
             sks = np.array(self.anno.loadCats(label['category_id'])[0]['skeleton']) - 1
             kp = np.array(label['keypoints'])
@@ -91,17 +119,16 @@ class myImageDataset_COCO(data.Dataset):
                     temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
 
                     Gauss_map[k, :, :] = np.exp(-temp)
-                    # draw_keypoints.point(np.array([x[k], y[k]]).tolist(), 'rgb({}, {}, {})'.format(k + 1, k + 1, k + 1))
+
+                    draw_keypoints.point(np.array([x[k], y[k]]).tolist(), 'rgb({}, {}, {})'.format(k + 1, k + 1, k + 1))
+                    plt.imshow(Label_map_keypoints)
+                    plt.show()
+                    print('sefes')
             for i, sk in enumerate(sks):
                 if np.all(v[sk] > 0):
                     draw_skeleton.line(np.stack([x[sk], y[sk]], axis=1).reshape([-1]).tolist(),
                                        'rgb({}, {}, {})'.format(1, 1, 1))
         del draw_skeleton
-        data_argument = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.RandomHorizontalFlip()
-        ])
-        image_after_arg = data_argument(image_after)
         return image_after, torch.Tensor(np.array(Gauss_map)).long(), torch.Tensor(
             np.array(Label_map_skeleton)).long()
 
@@ -124,24 +151,24 @@ class myImageDataset(data.Dataset):
     def __getitem__(self, index):
         image = Image.open(path.join(self.imagedir, self.list[index])).convert('RGB')
         w, h = image.size
-        image = image.resize([256, 256])
+        image = image.resize([inputsize, inputsize])
         if self.transform is not None:
             image = self.transform(image)
 
         number = int(self.list[index][2:6]) - 1
-        Gauss_map = np.zeros([14, 64, 64])
+        Gauss_map = np.zeros([14, int(inputsize / 4), int(inputsize / 4)])
         for k in range(14):
-            xs = self.mat['joints'][0][k][number] / w * 64
-            ys = self.mat['joints'][1][k][number] / h * 64
+            xs = self.mat['joints'][0][k][number] / w * inputsize / 4
+            ys = self.mat['joints'][1][k][number] / h * inputsize / 4
             sigma = 1
-            mask_x = np.matlib.repmat(xs, 64, 64)
-            mask_y = np.matlib.repmat(ys, 64, 64)
+            mask_x = np.matlib.repmat(xs, int(inputsize / 4), int(inputsize / 4))
+            mask_y = np.matlib.repmat(ys, int(inputsize / 4), int(inputsize / 4))
 
-            x1 = np.arange(64)
-            x_map = np.matlib.repmat(x1, 64, 1)
+            x1 = np.arange(int(inputsize / 4))
+            x_map = np.matlib.repmat(x1, int(inputsize / 4), 1)
 
-            y1 = np.arange(64)
-            y_map = np.matlib.repmat(y1, 64, 1)
+            y1 = np.arange(int(inputsize / 4))
+            y_map = np.matlib.repmat(y1, int(inputsize / 4), 1)
             y_map = np.transpose(y_map)
 
             temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
@@ -159,9 +186,15 @@ def main():
         transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
     ])
 
-    # test = myImageDataset_COCO(train_set_coco, train_image_dir_coco)
+    test = myImageDataset_COCO(train_set_coco, train_image_dir_coco, mytransform)
+    x, y, y1 = test.__getitem__(0)
     test_loader = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 1, True, num_workers=1)
-    for step, [x, keypoints, skeletion] in enumerate(test_loader, 0):
+    for step, [x, y_keypoints] in enumerate(test_loader, 0):
+        plt.subplot(1, 2, 1)
+        plt.imshow(transforms.ToPILImage()(x[0].cpu().data))
+        plt.subplot(1, 2, 2)
+        plt.imshow(y_keypoints[0, 0, :, :].cpu().data.numpy())
+        plt.show()
         print('efds')
     print('yyy')
 
