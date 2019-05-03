@@ -95,6 +95,37 @@ eval_image_dir_coco = '/data/COCO/COCO2017/val2017'
 # rootdir = '/data/lsp_dataset/images/'
 
 
+class PCKh(nn.Module):
+    def __init__(self):
+        super(PCKh, self).__init__()
+
+    def forward(self, x, target):
+        correct = 0
+        total = 0
+        for i in range(batch_size):
+            head_heat_map = target[i, 13, :, :]
+            head_ys = torch.max(torch.max(head_heat_map, 1)[0], 0)[1]
+            head_xs = torch.max(head_heat_map, 1)[1][head_ys]
+            neck_heat_map = target[i, 1, :, :]
+            neck_ys = torch.max(torch.max(neck_heat_map, 1)[0], 0)[1]
+            neck_xs = torch.max(neck_heat_map, 1)[1][neck_ys]
+            standard = torch.sqrt((torch.pow(head_ys - neck_ys, 2) + torch.pow(head_xs - neck_xs, 2)).float()) / 2
+            for j in range(14):
+                label_heat_map = target[i, j, :, :]
+                if torch.max(label_heat_map) == 0:
+                    continue
+                label_ys = torch.max(torch.max(label_heat_map, 1)[0], 0)[1]
+                label_xs = torch.max(label_heat_map, 1)[1][head_ys]
+                predict_heat_map = x[i, j, :, :]
+                predict_ys = torch.max(torch.max(predict_heat_map, 1)[0], 0)[1]
+                predict_xs = torch.max(label_heat_map, 1)[1][head_ys]
+                if torch.sqrt(
+                        (torch.pow(label_ys - predict_ys, 2) + torch.pow(label_xs - predict_xs, 2)).float()) < standard:
+                    correct += 1
+                total += 1
+        return correct / total
+
+
 class myImageDataset_COCO(data.Dataset):
     def __init__(self, anno, image_dir, transform=None):
         'Initialization'
@@ -213,6 +244,7 @@ class myImageDataset(data.Dataset):
 
 
 def main():
+    pckh = PCKh()
     image_dir = '/data/lsp_dataset/images'
     mat_dir = '/data/lsp_dataset/joints.mat'
     mytransform = transforms.Compose([
@@ -222,8 +254,9 @@ def main():
 
     test = myImageDataset_COCO(train_set_coco, train_image_dir_coco, mytransform)
     x, y, y1 = test.__getitem__(2)
-    test_loader = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 1, True, num_workers=1)
+    test_loader = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 16, True, num_workers=1)
     for step, [x, y_keypoints] in enumerate(test_loader, 0):
+        pckh(x, y_keypoints)
         plt.subplot(1, 2, 1)
         plt.imshow(transforms.ToPILImage()(x[0].cpu().data))
         plt.subplot(1, 2, 2)
