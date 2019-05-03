@@ -21,24 +21,55 @@ os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 # LSP dataset
-# Right ankle
-# Right knee
-# Right hip
-# Left hip
-# Left knee
-# Left ankle
-# Right wrist
-# Right elbow
-# Right shoulder
-# Left shoulder
-# Left elbow
-# Left wrist
-# Neck
-# Head top
+# 0 Right ankle
+# 1 Right knee
+# 2 Right hip
+# 3 Left hip
+# 4 Left knee
+# 5 Left ankle
+# 6 Right wrist
+# 7 Right elbow
+# 8 Right shoulder
+# 9 Left shoulder
+# 10 Left elbow
+# 11 Left wrist
+# 12 Neck
+# 13 Head top
 
+# coco dataset
+# [0 "nose",
+# 1 "left_eye",
+# 2 "right_eye",
+# 3 "left_ear",
+# 4 "right_ear",
+# 5 "left_shoulder",
+# 6 "right_shoulder",
+# 7 "left_elbow",
+# 8 "right_elbow",
+# 9 "left_wrist",
+# 10 "right_wrist",
+# 11 "left_hip",
+# 12 "right_hip",
+# 13 "left_knee",
+# 14 "right_knee",
+# 15 "left_ankle",
+# 16 "right_ankle"]
 
-
-
+# coco -> lsp
+# 0 -> 13
+# 5 + 6 -> 12
+# 9 -> 11
+# 7 -> 10
+# 5 -> 9
+# 6 -> 8
+# 8 -> 7
+# 10 -> 6
+# 15 -> 5
+# 13 -> 4
+# 11 -> 3
+# 12 -> 2
+# 14 -> 1
+# 16 -> 0
 
 nModules = 2
 nFeats = 256
@@ -121,6 +152,9 @@ class myImageDataset_COCO(data.Dataset):
                     Gauss_map[k, :, :] = np.exp(-temp)
 
                     draw_keypoints.point(np.array([x[k], y[k]]).tolist(), 'rgb({}, {}, {})'.format(k + 1, k + 1, k + 1))
+                    plt.subplot(1, 2, 1)
+                    plt.imshow(image)
+                    plt.subplot(1, 2, 2)
                     plt.imshow(Label_map_keypoints)
                     plt.show()
                     print('sefes')
@@ -187,7 +221,7 @@ def main():
     ])
 
     test = myImageDataset_COCO(train_set_coco, train_image_dir_coco, mytransform)
-    x, y, y1 = test.__getitem__(0)
+    x, y, y1 = test.__getitem__(2)
     test_loader = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 1, True, num_workers=1)
     for step, [x, y_keypoints] in enumerate(test_loader, 0):
         plt.subplot(1, 2, 1)
