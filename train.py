@@ -236,6 +236,7 @@ class myImageDataset_COCO(data.Dataset):
         sample = Rescale(320)(sample)
         sample = RandomCrop(inputsize)(sample)
         sample = RandomHorizontalFlip()(sample)
+        sample['image'] = transforms.ColorJitter(0.5, 0.5, 0.5, 0.3)(sample['image'])
 
         # Label_map_keypoints = np.zeros([int(inputsize / 4), int(inputsize / 4)])
         # Label_map_keypoints = Image.fromarray(Label_map_keypoints, 'L')
