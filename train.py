@@ -38,8 +38,8 @@ nSkeleton = 19
 nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton + 1
 nOutChannels_2 = nKeypoint
-epochs = 50
-batch_size = 32
+epochs = 100
+batch_size = 64
 keypoints = 17
 skeleton = 20
 inputsize = 256
@@ -492,22 +492,6 @@ class hourglass(nn.Module):
         return out
 
 
-class lin(nn.Module):
-    def __init__(self, numIn, numOut):
-        super(lin, self).__init__()
-        self.numIn = numIn
-        self.numOut = numOut
-        self.conv = nn.Conv2d(numIn, numOut, 1, 1, 0)
-        self.bn = nn.BatchNorm2d(numOut)
-        self.relu = nn.ReLU()
-
-    def forward(self, x):
-        x = self.conv(x)
-        x = self.bn(x)
-        out = self.relu(x)
-        return out
-
-
 class creatModel(nn.Module):
     def __init__(self):
         super(creatModel, self).__init__()
@@ -515,24 +499,20 @@ class creatModel(nn.Module):
             nn.Conv2d(3, 64, 7, 2, 3),
             nn.ReLU(),
             ResidualBlock(64, 128, stride=2),
-            ResidualBlock(128, 128),
             ResidualBlock(128, nFeats)
         )
         self.stage1 = nn.Sequential(
             hourglass(nFeats),
-            ResidualBlock(nFeats, nFeats),
         )
 
         self.stage1_out = nn.Conv2d(nFeats, nOutChannels_0, 1, 1, 0, bias=False)
         self.stage2 = nn.Sequential(
             hourglass(nFeats),
-            ResidualBlock(nFeats, nFeats),
         )
         self.stage2_out = nn.Conv2d(nFeats, nOutChannels_1, 1, 1, 0, bias=False)
         self.stage2_return = nn.Conv2d(2 * nFeats + nOutChannels_1, nFeats, 1, 1, 0, bias=False)
         self.stage3 = nn.Sequential(
             hourglass(nFeats),
-            ResidualBlock(nFeats, nFeats),
         )
         self.stage3_out = nn.Conv2d(nFeats, nOutChannels_2, 1, 1, 0, bias=False)
 
@@ -646,7 +626,7 @@ def main():
         imgLoader_train_coco = data.DataLoader(
             myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size,
             shuffle=True, num_workers=16)
-        opt = torch.optim.Adam(model.parameters(), lr=1e-4)
+        opt = torch.optim.Adam(model.parameters(), lr=1e-4, eps=1e-4)
         model, opt = amp.initialize(model, opt, opt_level="O1")
         model.train()
 
@@ -687,6 +667,8 @@ def main():
                         epoch, epochs, i, len(imgLoader_train_coco), loss_record,
                         loss1_record, loss2_record, loss3_record
                     ))
+
+
 
             epoch += 1
             state = {
@@ -760,7 +742,7 @@ def main():
             results = result[1].cpu().float().data.numpy()
             for i in range(nOutChannels_1):
                 plt.subplot(3, int(nOutChannels_1 / 2), i + 1)
-                result_print = np.maximum(np.multiply(results[0, i, :, :], mask), 0)
+                result_print = results[0, i, :, :]
                 plt.imshow(result_print)
             plt.subplot(3, 1, 3)
             plt.imshow(image)
@@ -770,7 +752,8 @@ def main():
             COCO_to_LSP(results)
             for i in range(17):
                 plt.subplot(3, 9, i + 1)
-                result_print = np.maximum(np.multiply(results[0, i, :, :], mask), 0)
+                # result_print = np.maximum(np.multiply(results[0, i, :, :], mask), 0)
+                result_print = results[0, i, :, :]
 
                 peak_value = peak_local_max(result_print, min_distance=15)
 
