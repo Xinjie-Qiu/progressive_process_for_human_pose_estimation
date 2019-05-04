@@ -253,8 +253,10 @@ def main():
     ])
 
     test = myImageDataset_COCO(train_set_coco, train_image_dir_coco, mytransform)
-    x, y, y1 = test.__getitem__(2)
+    # x, y, y1 = test.__getitem__(2)
     test_loader = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 16, True, num_workers=1)
+    imgIter = iter(test_loader)
+
     for step, [x, y_keypoints] in enumerate(test_loader, 0):
         pckh(x, y_keypoints)
         plt.subplot(1, 2, 1)
