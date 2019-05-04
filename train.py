@@ -38,7 +38,7 @@ nSkeleton = 19
 nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton + 1
 nOutChannels_2 = nKeypoint
-epochs = 100
+epochs = 200
 batch_size = 64
 keypoints = 17
 skeleton = 20
@@ -46,7 +46,7 @@ inputsize = 256
 
 threshold = 0.8
 
-mode = 'test'
+mode = 'train'
 save_model_name = 'params_1_stable_try_aspp'
 
 train_set = 'train_set.txt'
@@ -559,8 +559,52 @@ class creatModel(nn.Module):
 # 14 -> 1
 # 16 -> 0
 
+class myImageDataset(data.Dataset):
+    def __init__(self, imagedir, matdir, transform=None, dim=(256, 256), n_channels=3,
+                 n_joints=14):
+        'Initialization'
+        self.mat = scipy.io.loadmat(matdir)
+        self.dim = dim
+        self.imagedir = imagedir
+        self.list = os.listdir(imagedir)
+        self.n_channels = n_channels
+        self.n_joints = n_joints
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.list)
+
+    def __getitem__(self, index):
+        image = Image.open(path.join(self.imagedir, self.list[index])).convert('RGB')
+        w, h = image.size
+        image = image.resize([inputsize, inputsize])
+        if self.transform is not None:
+            image = self.transform(image)
+
+        number = int(self.list[index][2:6]) - 1
+        Gauss_map = np.zeros([14, int(inputsize / 4), int(inputsize / 4)])
+        for k in range(14):
+            xs = self.mat['joints'][0][k][number] / w * inputsize / 4
+            ys = self.mat['joints'][1][k][number] / h * inputsize / 4
+            sigma = 1
+            mask_x = np.matlib.repmat(xs, int(inputsize / 4), int(inputsize / 4))
+            mask_y = np.matlib.repmat(ys, int(inputsize / 4), int(inputsize / 4))
+
+            x1 = np.arange(int(inputsize / 4))
+            x_map = np.matlib.repmat(x1, int(inputsize / 4), 1)
+
+            y1 = np.arange(int(inputsize / 4))
+            y_map = np.matlib.repmat(y1, int(inputsize / 4), 1)
+            y_map = np.transpose(y_map)
+
+            temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
+
+            Gauss_map[k, :, :] = 1 / (2 * np.pi * sigma ** 2) * np.exp(-temp)
+
+        return image, torch.Tensor(Gauss_map)
+
+
 def COCO_to_LSP(input):
-    input = torch.Tensor(input)
     result = torch.zeros(input.shape[0], 14, input.shape[2], input.shape[3])
     result[:, 0, :, :] = input[:, 16, :, :]
     result[:, 1, :, :] = input[:, 14, :, :]
@@ -587,7 +631,7 @@ class PCKh(nn.Module):
     def forward(self, x, target):
         correct = 0
         total = 0
-        for i in range(batch_size):
+        for i in range(8):
             head_heat_map = target[i, 13, :, :]
             head_ys = torch.max(torch.max(head_heat_map, 1)[0], 0)[1]
             head_xs = torch.max(head_heat_map, 1)[1][head_ys]
@@ -613,12 +657,15 @@ class PCKh(nn.Module):
 
 def main():
     if mode == 'train':
+        image_dir = '/data/lsp_dataset/images'
+        mat_dir = '/data/lsp_dataset/joints.mat'
         writer = SummaryWriter('runs/' + save_model_name)
         model = creatModel()
         model.cuda()
         loss1_background = Costomer_CrossEntropyLoss().cuda()
         loss2_skeleton = Costomer_CrossEntropyLoss_with_mask().cuda()
         loss3_keypoints = Costomer_MSELoss_with_mask().cuda()
+        pckh = PCKh()
         mytransform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
@@ -626,6 +673,8 @@ def main():
         imgLoader_train_coco = data.DataLoader(
             myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size,
             shuffle=True, num_workers=16)
+        imgLoader_eval = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 8, True, num_workers=16)
+        imgIter = iter(imgLoader_eval)
         opt = torch.optim.Adam(model.parameters(), lr=1e-4, eps=1e-4)
         model, opt = amp.initialize(model, opt, opt_level="O1")
         model.train()
@@ -667,8 +716,20 @@ def main():
                         epoch, epochs, i, len(imgLoader_train_coco), loss_record,
                         loss1_record, loss2_record, loss3_record
                     ))
+                if i % 100 == 0:
+                    model.eval()
+                    steps = i + len(imgLoader_train_coco) * epoch
+                    dataiter = iter(imgIter)
+                    x_, y = dataiter.next()
+                    bx_, by = x_.cuda(), y.cuda()
+                    result = model(bx_)
 
-
+                    results = result[0]
+                    mask = torch.argmax(results[0, :, :, :], dim=0)
+                    result = COCO_to_LSP(result[2])
+                    accuracy = pckh(result, by)
+                    writer.add_scalar('accuracy', accuracy, steps)
+                    model.train()
 
             epoch += 1
             state = {
