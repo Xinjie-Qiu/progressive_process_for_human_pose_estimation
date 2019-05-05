@@ -720,8 +720,11 @@ def main():
                 if i % 100 == 0:
                     model.eval()
                     steps = i + len(imgLoader_train_coco) * epoch
-                    dataiter = iter(imgIter)
-                    x_, y = dataiter.next()
+                    try:
+                        x_, y = imgIter.next()
+                    except StopIteration:
+                        imgIter = iter(imgLoader_eval)
+                        x_, y = imgIter.next()
                     bx_, by = x_.cuda(), y.cuda()
                     result = model(bx_)
 
