@@ -28,7 +28,7 @@ matplotlib.use('TkAgg')
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 nModules = 2
 nFeats = 256
@@ -47,7 +47,7 @@ inputsize = 256
 threshold = 0.8
 
 mode = 'train'
-save_model_name = 'params_1_stable_try_aspp'
+save_model_name = 'params_1_stable_balance_out_feature'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -502,41 +502,44 @@ class creatModel(nn.Module):
             ResidualBlock(64, 128, stride=2),
             ResidualBlock(128, nFeats)
         )
-        self.stage1 = nn.Sequential(
-            hourglass(nFeats),
-        )
+        self.stage1 = hourglass(nFeats)
 
         self.stage1_out = nn.Conv2d(nFeats, nOutChannels_0, 1, 1, 0, bias=False)
-        self.stage2 = nn.Sequential(
-            hourglass(nFeats),
-        )
+        self.stage1_return = nn.Conv2d(nOutChannels_0, int(nFeats / 2), 1, 1, 0, bias=False)
+        self.stage1_down_feature = nn.Conv2d(nFeats, int(nFeats / 2), 1, 1, 0, bias=False)
+
+        self.stage2 = hourglass(nFeats)
         self.stage2_out = nn.Conv2d(nFeats, nOutChannels_1, 1, 1, 0, bias=False)
-        self.stage2_return = nn.Conv2d(2 * nFeats + nOutChannels_1, nFeats, 1, 1, 0, bias=False)
-        self.stage3 = nn.Sequential(
-            hourglass(nFeats),
-        )
+        self.stage2_return = nn.Conv2d(nOutChannels_1, int(nFeats / 2), 1, 1, 0, bias=False)
+        self.stage2_down_feature = nn.Conv2d(nFeats, int(nFeats / 2), 1, 1, 0, bias=False)
+
+        self.stage3 = hourglass(nFeats)
         self.stage3_out = nn.Conv2d(nFeats, nOutChannels_2, 1, 1, 0, bias=False)
 
     def forward(self, x):
         i = 0
-        x = self.preprocess1(x)
+        inter = self.preprocess1(x)
         out = []
-        ll = self.stage1(x)
+        ll = self.stage1(inter)
         tmpOut = self.stage1_out(ll)
-
         out.insert(i, tmpOut)
-        i = 1
-        x = torch.mul(x, torch.argmax(tmpOut[:, :, :, :], dim=1).view(
-            [tmpOut.shape[0], 1, tmpOut.shape[2], tmpOut.shape[3]]).float().half())
 
-        inter = x
+        tmpOut = self.stage1_return(tmpOut)
+        inter = self.stage1_down_feature(inter)
+        inter = torch.cat([tmpOut, inter], dim=1)
+
+        i = 1
+
+
         ll = self.stage2(inter)
         tmpOut = self.stage2_out(ll)
-
         out.insert(i, tmpOut)
-        ll_ = torch.cat([inter, ll, tmpOut], dim=1)
-        inter = self.stage2_return(ll_)
+        tmpOut = self.stage2_return(tmpOut)
+        inter = self.stage2_down_feature(inter)
+        inter = torch.cat([tmpOut, inter], dim=1)
+
         i = 2
+
         ll = self.stage3(inter)
         tmpOut = self.stage3_out(ll)
         out.insert(i, tmpOut)
