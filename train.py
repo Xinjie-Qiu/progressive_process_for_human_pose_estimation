@@ -724,10 +724,10 @@ def main():
                     model.eval()
                     steps = i + len(imgLoader_train_coco) * epoch
                     try:
-                        x_, y = imgIter.next().cuda().half()
+                        x_, y = imgIter.next()
                     except StopIteration:
                         imgIter = iter(imgLoader_eval)
-                        x_, y = imgIter.next().cuda().half()
+                        x_, y = imgIter.next()
                     bx_, by = x_.cuda(), y.cuda()
                     result = model(bx_)
 
