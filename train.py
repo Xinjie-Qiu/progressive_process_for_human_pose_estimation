@@ -28,7 +28,7 @@ matplotlib.use('TkAgg')
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 nModules = 2
 nFeats = 256
@@ -47,7 +47,7 @@ inputsize = 256
 threshold = 0.8
 
 mode = 'train'
-save_model_name = 'params_1_stable_balance_out_feature'
+save_model_name = 'params_1_stable_balance_loss'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -352,7 +352,7 @@ class Costomer_CrossEntropyLoss_with_mask(loss._WeightedLoss):
     def forward(self, input, target, mask):
         loss = F.nll_loss(F.log_softmax(input), target, reduce=False)
         loss = torch.mul(loss, mask.float()).view([loss.shape[0], -1])
-        loss = loss.sum(dim=1).mean()
+        loss = loss.mean()
         return loss
 
 
@@ -367,7 +367,7 @@ class Costomer_MSELoss_with_mask(loss._WeightedLoss):
         loss = F.mse_loss(input, target, reduce=False)
         loss = torch.mul(loss, mask.float().view([mask.shape[0], 1, mask.shape[1], mask.shape[2]])).view(
             [loss.shape[0], -1])
-        loss = loss.sum(dim=1).mean()
+        loss = loss.mean()
         return loss
 
 
@@ -547,22 +547,6 @@ class creatModel(nn.Module):
         return out
 
 
-# coco -> lsp
-# 0 -> 13
-# 5 + 6 -> 12
-# 9 -> 11
-# 7 -> 10
-# 5 -> 9
-# 6 -> 8
-# 8 -> 7
-# 10 -> 6
-# 15 -> 5
-# 13 -> 4
-# 11 -> 3
-# 12 -> 2
-# 14 -> 1
-# 16 -> 0
-
 class myImageDataset(data.Dataset):
     def __init__(self, imagedir, matdir, transform=None, dim=(256, 256), n_channels=3,
                  n_joints=14):
@@ -666,7 +650,7 @@ def main():
         writer = SummaryWriter('runs/' + save_model_name)
         model = creatModel()
         model.cuda()
-        loss1_background = Costomer_CrossEntropyLoss().cuda()
+        loss1_background = nn.CrossEntropyLoss().cuda()
         loss2_skeleton = Costomer_CrossEntropyLoss_with_mask().cuda()
         loss3_keypoints = Costomer_MSELoss_with_mask().cuda()
         pckh = PCKh()
@@ -679,7 +663,7 @@ def main():
             shuffle=True, num_workers=16)
         imgLoader_eval = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 8, True, num_workers=16)
         imgIter = iter(imgLoader_eval)
-        opt = torch.optim.Adam(model.parameters(), lr=1e-4, eps=1e-4)
+        opt = torch.optim.Adam(model.parameters(), lr=2.5e-4, eps=1e-4)
         model, opt = amp.initialize(model, opt, opt_level="O1")
         model.train()
 
@@ -695,10 +679,10 @@ def main():
             for i, [x_, y_keypoints, y_skeleton, y_background] in enumerate(imgLoader_train_coco, 0):
                 bx_, by_keypoints, by_skeleton, by_background = x_.cuda(), y_keypoints.cuda(), y_skeleton.cuda(), y_background.cuda()
                 result = model(bx_)
-                loss_1 = loss1_background.forward(result[0], by_background, (100 - epoch) / 100)
+                loss_1 = loss1_background.forward(result[0], by_background)
                 loss_2 = loss2_skeleton.forward(result[1], by_skeleton, torch.argmax(result[0], dim=1))
                 loss_3 = loss3_keypoints.forward(result[2], by_keypoints, torch.argmax(result[0], dim=1))
-                losses = loss_1 + loss_2 + loss_3
+                losses = loss_1 + loss_2 + 100 * loss_3
                 opt.zero_grad()
                 with amp.scale_loss(losses, opt) as scaled_loss:
                     scaled_loss.backward()
