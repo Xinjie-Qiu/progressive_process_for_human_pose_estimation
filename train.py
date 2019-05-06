@@ -28,7 +28,7 @@ matplotlib.use('TkAgg')
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 nModules = 2
 nFeats = 256
@@ -39,7 +39,7 @@ nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton + 1
 nOutChannels_2 = nKeypoint
 epochs = 200
-batch_size = 64
+batch_size = 32
 keypoints = 17
 skeleton = 20
 inputsize = 256
@@ -47,7 +47,7 @@ inputsize = 256
 threshold = 0.8
 
 mode = 'train'
-save_model_name = 'params_1_stable_balance_loss'
+save_model_name = 'params_1_stable_more_deeper'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -520,6 +520,7 @@ class creatModel(nn.Module):
             nn.Conv2d(3, 64, 7, 2, 3),
             nn.ReLU(),
             ResidualBlock(64, 128, stride=2),
+            ResidualBlock(128, 128),
             ResidualBlock(128, nFeats)
         )
         self.stage1 = hourglass(nFeats)
