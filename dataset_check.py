@@ -417,19 +417,68 @@ class myImageDataset(data.Dataset):
 
 
 def main():
-    pckh = PCKh()
-    image_dir = '/data/lsp_dataset/images'
-    mat_dir = '/data/lsp_dataset/joints.mat'
+    # T = scipy.io.loadmat(mat_dir, squeeze_me=True, struct_as_record=False)
+    # M = T['RELEASE']
+    # annots = M.annolist
+    # is_train = M.img_train
+    # label = M.act
+    # for i in range(len(annots)):
+    #     # if is_train[i] == 0:
+    #     img_name = annots[i].image
+    #     points_fmted = []
+    #     annot = annots[i]
+    #     if 'annorect' in dir(annot):
+    #         rects = annot.annorect
+    #         if isinstance(rects, scipy.io.matlab.mio5_params.mat_struct):
+    #             rects = np.array([rects])
+    #             for rect in rects:
+    #                 points_rect = []
+    #                 try:
+    #                     points = rect.annopoints.point
+    #                 except:
+    #                     continue
+    #                 for point in points:
+    #                     if point.is_visible in [0, 1]:
+    #                         is_visible = point.is_visible
+    #                     else:
+    #                         is_visible = 0
+    #                     points_rect.append((point.id, point.x, point.y, is_visible))
+    #                     points_fmted.append(points_rect)
+
+    # for aid, annot in enumerate(annots):
+    #     img_name = annot.image.name
+    #     points_fmted = []
+    #     if 'annorect' in dir(annot):
+    #         rects = annot.annorect
+    #         if isinstance(rects, scipy.io.matlab.mio5_params.mat_struct):
+    #             rects = np.array([rects])
+    #             for rect in rects:
+    #                 points_rect = []
+    #                 try:
+    #                     points = rect.annopoints.point
+    #                 except:
+    #                     continue
+    #                 for point in points:
+    #                     if point.is_visible in [0, 1]:
+    #                         is_visible = point.is_visible
+    #                     else:
+    #                         is_visible = 0
+    #                     points_rect.append((point.id, point.x, point.y, is_visible))
+    #                     points_fmted.append(points_rect)
+
+
+
+    image_dir = '/data/mpii/mpii_human_pose_v1/images'
+    mat_dir = '/data/mpii/mpii_human_pose_v1_u12_2/mpii_human_pose_v1_u12_1.mat'
     mytransform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
     ])
 
-    test = myImageDataset_COCO(train_set_coco, train_image_dir_coco, mytransform)
-    for i in range(100):
-        x, y, y1 = test.__getitem__(0)
+    # test = myImageDataset_COCO(train_set_coco, train_image_dir_coco, mytransform)
+    # for i in range(100):
+    #     x, y, y1 = test.__getitem__(0)
     test_loader = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 16, True, num_workers=1)
-    imgIter = iter(test_loader)
 
     for step, [x, y_keypoints] in enumerate(test_loader, 0):
         pckh(x, y_keypoints)

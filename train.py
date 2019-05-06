@@ -738,8 +738,8 @@ def main():
 
                     results = result[0]
                     mask = torch.argmax(results[0, :, :, :], dim=0)
-                    result = COCO_to_LSP(result[2])
-                    accuracy = pckh(result, by)
+                    result_ = COCO_to_LSP(result[2])
+                    accuracy = pckh(result_, by)
                     writer.add_scalar('accuracy', accuracy, steps)
                     model.train()
 
