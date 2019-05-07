@@ -375,7 +375,11 @@ class myImageDataset(data.Dataset):
     def __init__(self, imagedir, matdir, transform=None, dim=(256, 256), n_channels=3,
                  n_joints=14):
         'Initialization'
-        self.mat = scipy.io.loadmat(matdir)
+        T = scipy.io.loadmat(matdir, squeeze_me=True, struct_as_record=False)
+        M = T['RELEASE']
+        annots = M.annolist
+        is_train = M.img_train
+        label = M.act
         self.dim = dim
         self.imagedir = imagedir
         self.list = os.listdir(imagedir)
