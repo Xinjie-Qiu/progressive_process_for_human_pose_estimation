@@ -38,7 +38,7 @@ nSkeleton = 19
 nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton + 1
 nOutChannels_2 = nKeypoint
-epochs = 200
+epochs = 1000
 batch_size = 64
 keypoints = 17
 skeleton = 20
@@ -785,11 +785,14 @@ def main():
             transforms.ToTensor(),
             transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
         ])
-        model = creatModel()
-        model.eval().cuda().half()
+        generatemask = generateMask().cuda().half()
         state = torch.load(save_model_name)
-        model.load_state_dict(state['state_dict'])
-        epoch = state['epoch']
+        generatemask.load_state_dict(state['state_dict'])
+        # model = creatModel()
+        # model.eval().cuda().half()
+        # state = torch.load(save_model_name)
+        # model.load_state_dict(state['state_dict'])
+        # epoch = state['epoch']
         test_mode = 'test'
         if test_mode == 'coco':
 
@@ -827,52 +830,52 @@ def main():
         elif test_mode == 'test':
             image = Image.open('test_img/im2.jpg').resize([256, 256])
             image_normalize = (mytransform(image)).unsqueeze(0).cuda().half()
-            result = model.forward(image_normalize)
+            result = generatemask.forward(image_normalize)
             # image = (image.cpu().float().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
             # image = Image.fromarray(image)
 
-            results = result[0].cpu().float().data.numpy()
+            results = result.cpu().float().data.numpy()
             plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)  # 调整子图间距
-            draw = ImageDraw.Draw(image)
+            # draw = ImageDraw.Draw(image)
             plt.subplot(1, 2, 1)
             plt.imshow(image)
             plt.subplot(1, 2, 2)
             mask = np.argmax(results[0, :, :, :], axis=0)
             plt.imshow(mask)
             plt.show()
-            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)
-            results = result[1].cpu().float().data.numpy()
-            for i in range(nOutChannels_1):
-                plt.subplot(3, int(nOutChannels_1 / 2), i + 1)
-                result_print = results[0, i, :, :]
-                plt.imshow(result_print)
-            plt.subplot(3, 1, 3)
-            plt.imshow(image)
-            plt.show()
-            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)
-            results = result[2].cpu().float().data.numpy()
-            COCO_to_LSP(results)
-            for i in range(17):
-                plt.subplot(3, 9, i + 1)
-                # result_print = np.maximum(np.multiply(results[0, i, :, :], mask), 0)
-                result_print = results[0, i, :, :]
-
-                peak_value = peak_local_max(result_print, min_distance=15)
-
-                y_point = peak_value[:, 0] * 4
-                x_point = peak_value[:, 1] * 4
-                plt.imshow(result_print)
-
-                width = 2
-                for j in range(len(x_point)):
-                    draw.ellipse([x_point[j] - width, y_point[j] - width, x_point[j] + width, y_point[j] + width],
-                                 fill=(int(255 / 17 * i), int(255 / 17 * i), int(255 / 17 * i)),
-                                 outline=(int(255 / 17 * i), int(255 / 17 * i), int(255 / 17 * i)))
-
-            del draw
-            plt.subplot(3, 1, 3)
-            plt.imshow(image)
-            plt.show()
+            # plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)
+            # results = result[1].cpu().float().data.numpy()
+            # for i in range(nOutChannels_1):
+            #     plt.subplot(3, int(nOutChannels_1 / 2), i + 1)
+            #     result_print = results[0, i, :, :]
+            #     plt.imshow(result_print)
+            # plt.subplot(3, 1, 3)
+            # plt.imshow(image)
+            # plt.show()
+            # plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)
+            # results = result[2].cpu().float().data.numpy()
+            # COCO_to_LSP(results)
+            # for i in range(17):
+            #     plt.subplot(3, 9, i + 1)
+            #     # result_print = np.maximum(np.multiply(results[0, i, :, :], mask), 0)
+            #     result_print = results[0, i, :, :]
+            #
+            #     peak_value = peak_local_max(result_print, min_distance=15)
+            #
+            #     y_point = peak_value[:, 0] * 4
+            #     x_point = peak_value[:, 1] * 4
+            #     plt.imshow(result_print)
+            #
+            #     width = 2
+            #     for j in range(len(x_point)):
+            #         draw.ellipse([x_point[j] - width, y_point[j] - width, x_point[j] + width, y_point[j] + width],
+            #                      fill=(int(255 / 17 * i), int(255 / 17 * i), int(255 / 17 * i)),
+            #                      outline=(int(255 / 17 * i), int(255 / 17 * i), int(255 / 17 * i)))
+            #
+            # del draw
+            # plt.subplot(3, 1, 3)
+            # plt.imshow(image)
+            # plt.show()
 
         print('yyy')
 
