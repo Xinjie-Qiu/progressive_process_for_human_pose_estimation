@@ -79,7 +79,7 @@ nStack = 4
 nOutChannels = 18
 epochs = 1000
 batch_size = 16
-keypoints = 17
+keypoints = 16
 
 inputsize = 256
 
@@ -377,12 +377,19 @@ class myImageDataset(data.Dataset):
         'Initialization'
         T = scipy.io.loadmat(matdir, squeeze_me=True, struct_as_record=False)
         M = T['RELEASE']
-        annots = M.annolist
+        self.M = M
+        self.annots = M.annolist
         is_train = M.img_train
         label = M.act
+        single_person = np.zeros_like(M.single_person)
+        for i in range(len(M.single_person)):
+            if isinstance(M.single_person[i], np.int):
+                if M.single_person[i] == 1:
+                    single_person[i] = 1
+
+        self.list = np.nonzero(np.multiply(is_train, single_person))[0]
         self.dim = dim
         self.imagedir = imagedir
-        self.list = os.listdir(imagedir)
         self.n_channels = n_channels
         self.n_joints = n_joints
         self.transform = transform
@@ -391,86 +398,38 @@ class myImageDataset(data.Dataset):
         return len(self.list)
 
     def __getitem__(self, index):
-        image = Image.open(path.join(self.imagedir, self.list[index])).convert('RGB')
+        anno = self.annots[self.list[index]]
+        image_name = anno.image.name
+
+        image = Image.open(path.join(self.imagedir, image_name)).convert('RGB')
+        # plt.imshow(image)
+        # plt.show()
         w, h = image.size
         image = image.resize([inputsize, inputsize])
-        if self.transform is not None:
-            image = self.transform(image)
+        # if self.transform is not None:
+        #     image = self.transform(image)
 
-        number = int(self.list[index][2:6]) - 1
-        Gauss_map = np.zeros([14, int(inputsize / 4), int(inputsize / 4)])
-        for k in range(14):
-            xs = self.mat['joints'][0][k][number] / w * inputsize / 4
-            ys = self.mat['joints'][1][k][number] / h * inputsize / 4
-            sigma = 1
-            mask_x = np.matlib.repmat(xs, int(inputsize / 4), int(inputsize / 4))
-            mask_y = np.matlib.repmat(ys, int(inputsize / 4), int(inputsize / 4))
 
-            x1 = np.arange(int(inputsize / 4))
-            x_map = np.matlib.repmat(x1, int(inputsize / 4), 1)
+        rect = anno.annorect
+        points = rect.annopoints.point
+        points_rect = []
+        for point in points:
+            if point.is_visible in [0, 1]:
+                is_visible = point.is_visible
+            else:
+                is_visible = 0
+            points_rect.append((point.id, point.x, point.y, is_visible))
+        points = np.zeros([keypoints, 3])
+        for i in range(len(points_rect)):
 
-            y1 = np.arange(int(inputsize / 4))
-            y_map = np.matlib.repmat(y1, int(inputsize / 4), 1)
-            y_map = np.transpose(y_map)
+            xs = points_rect[i][1] * inputsize / w / 4
+            ys = points_rect[i][2] * inputsize / h / 4
+            points[points_rect[i][0], :] = [xs, ys, points_rect[i][3]]
 
-            temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
-
-            Gauss_map[k, :, :] = 1 / (2 * np.pi * sigma ** 2) * np.exp(-temp)
-
-        return image, torch.Tensor(Gauss_map)
+        return image, torch.Tensor(points)
 
 
 def main():
-    # T = scipy.io.loadmat(mat_dir, squeeze_me=True, struct_as_record=False)
-    # M = T['RELEASE']
-    # annots = M.annolist
-    # is_train = M.img_train
-    # label = M.act
-    # for i in range(len(annots)):
-    #     # if is_train[i] == 0:
-    #     img_name = annots[i].image
-    #     points_fmted = []
-    #     annot = annots[i]
-    #     if 'annorect' in dir(annot):
-    #         rects = annot.annorect
-    #         if isinstance(rects, scipy.io.matlab.mio5_params.mat_struct):
-    #             rects = np.array([rects])
-    #             for rect in rects:
-    #                 points_rect = []
-    #                 try:
-    #                     points = rect.annopoints.point
-    #                 except:
-    #                     continue
-    #                 for point in points:
-    #                     if point.is_visible in [0, 1]:
-    #                         is_visible = point.is_visible
-    #                     else:
-    #                         is_visible = 0
-    #                     points_rect.append((point.id, point.x, point.y, is_visible))
-    #                     points_fmted.append(points_rect)
-
-    # for aid, annot in enumerate(annots):
-    #     img_name = annot.image.name
-    #     points_fmted = []
-    #     if 'annorect' in dir(annot):
-    #         rects = annot.annorect
-    #         if isinstance(rects, scipy.io.matlab.mio5_params.mat_struct):
-    #             rects = np.array([rects])
-    #             for rect in rects:
-    #                 points_rect = []
-    #                 try:
-    #                     points = rect.annopoints.point
-    #                 except:
-    #                     continue
-    #                 for point in points:
-    #                     if point.is_visible in [0, 1]:
-    #                         is_visible = point.is_visible
-    #                     else:
-    #                         is_visible = 0
-    #                     points_rect.append((point.id, point.x, point.y, is_visible))
-    #                     points_fmted.append(points_rect)
-
-
 
     image_dir = '/data/mpii/mpii_human_pose_v1/images'
     mat_dir = '/data/mpii/mpii_human_pose_v1_u12_2/mpii_human_pose_v1_u12_1.mat'
@@ -482,16 +441,10 @@ def main():
     # test = myImageDataset_COCO(train_set_coco, train_image_dir_coco, mytransform)
     # for i in range(100):
     #     x, y, y1 = test.__getitem__(0)
-    test_loader = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 16, True, num_workers=1)
+    test_loader = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 4, True, num_workers=1)
 
     for step, [x, y_keypoints] in enumerate(test_loader, 0):
-        pckh(x, y_keypoints)
-        plt.subplot(1, 2, 1)
-        plt.imshow(transforms.ToPILImage()(x[0].cpu().data))
-        plt.subplot(1, 2, 2)
-        plt.imshow(y_keypoints[0, 0, :, :].cpu().data.numpy())
-        plt.show()
-        print('efds')
+        print('esf')
     print('yyy')
 
 
