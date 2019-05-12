@@ -47,7 +47,8 @@ inputsize = 256
 threshold = 0.8
 
 mode = 'train'
-save_model_name = 'params_1_mask'
+load_model_name = 'params_1_mask_aspp'
+save_model_name = 'params_2_mask_aspp'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -236,7 +237,7 @@ class myImageDataset_COCO(data.Dataset):
         sample = Rescale(320)(sample)
         sample = RandomCrop(inputsize)(sample)
         sample = RandomHorizontalFlip()(sample)
-        sample['image'] = transforms.ColorJitter(0.5, 0.5, 0.5, 0.3)(sample['image'])
+        sample['image'] = transforms.ColorJitter(0.1, 0.1, 0.1, 0.1)(sample['image'])
 
         # Label_map_keypoints = np.zeros([int(inputsize / 4), int(inputsize / 4)])
         # Label_map_keypoints = Image.fromarray(Label_map_keypoints, 'L')
@@ -484,6 +485,8 @@ class hourglass(nn.Module):
         self.conv2 = nn.Conv2d(2 * f, f, 1, 1, bias=False)
         self.conv1 = nn.Conv2d(2 * f, f, 1, 1, bias=False)
 
+        self.aspp = ASPP_Block()
+
     def forward(self, x):
         up1 = self.residual1(x)
         down1 = self.downsample1(x)
@@ -491,15 +494,9 @@ class hourglass(nn.Module):
         down2 = self.downsample2(down1)
         up3 = self.residual3(down2)
         down3 = self.downsample3(down2)
-        up4 = self.residual4(down3)
         down4 = self.downsample4(down3)
-        out = self.residual5(down4)
-        out = self.upsample4(out)
-        out = F.interpolate(out, scale_factor=2)
-        out = torch.cat([out, up4], dim=1)
-        out = self.conv4(out)
-        out = self.upsample3(out)
-        out = F.interpolate(out, scale_factor=2)
+        out = self.aspp(down4)
+        out = F.interpolate(out, scale_factor=4)
         out = torch.cat([out, up3], dim=1)
         out = self.conv3(out)
         out = self.upsample2(out)
@@ -706,17 +703,18 @@ def main():
             shuffle=True, num_workers=8)
         imgLoader_eval = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 8, True, num_workers=16)
         imgIter = iter(imgLoader_eval)
-        mask_opt = torch.optim.Adam(generatemask.parameters(), lr=2.5e-4, eps=1e-4)
+        mask_opt = torch.optim.Adam(generatemask.parameters(), lr=1e-3, eps=1e-4)
         # opt = torch.optim.Adam(model.parameters(), lr=2.5e-4, eps=1e-4)
         generatemask, mask_opt = amp.initialize(generatemask, mask_opt, opt_level="O1")
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(mask_opt, mode='min')
         generatemask.train()
         # model, opt = amp.initialize(model, opt, opt_level="O1")
         # model.train()
 
-        if retrain or not os.path.isfile(save_model_name):
+        if retrain or not os.path.isfile(load_model_name):
             epoch = 0
         else:
-            state = torch.load(save_model_name)
+            state = torch.load(load_model_name)
             generatemask.load_state_dict(state['state_dict'])
             mask_opt.load_state_dict(state['optimizer'])
             epoch = state['epoch']
@@ -739,6 +737,7 @@ def main():
                 #     scaled_loss.backward()
                 # losses.backward()
                 mask_opt.step()
+                scheduler.step(loss)
                 # scheduler.step(losses)
                 if i % 50 == 0:
                     loss_record = loss.cpu().data.numpy()
@@ -754,6 +753,13 @@ def main():
                     print('[{}/{}][{}/{}] Loss: {}'.format(
                         epoch, epochs, i, len(imgLoader_train_coco), loss_record
                     ))
+                if i % 100 == 0:
+                    steps = i + len(imgLoader_train_coco) * epoch
+                    image = torchvision.utils.make_grid(bx_, normalize=True, range=(0, 1))
+                    object = torch.argmax(result, dim=1).unsqueeze(1)
+                    object = torchvision.utils.make_grid(object, normalize=True, range=(0, 1))
+                    writer.add_image('image', image, steps)
+                    writer.add_image('object', object, steps)
                 # if i % 100 == 0:
                 #     model.eval()
                 #     steps = i + len(imgLoader_train_coco) * epoch
@@ -828,7 +834,7 @@ def main():
                 plt.show()
 
         elif test_mode == 'test':
-            image = Image.open('test_img/im2.jpg').resize([256, 256])
+            image = Image.open('test_img/im6.png').resize([256, 256])
             image_normalize = (mytransform(image)).unsqueeze(0).cuda().half()
             result = generatemask.forward(image_normalize)
             # image = (image.cpu().float().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
