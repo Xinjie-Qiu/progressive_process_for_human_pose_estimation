@@ -380,14 +380,16 @@ class myImageDataset(data.Dataset):
         self.M = M
         self.annots = M.annolist
         is_train = M.img_train
-        label = M.act
-        single_person = np.zeros_like(M.single_person)
-        for i in range(len(M.single_person)):
-            if isinstance(M.single_person[i], np.int):
-                if M.single_person[i] == 1:
+        lists = np.nonzero(is_train)
+        single_person = np.zeros_like(self.annots)
+        for i in lists[0]:
+            anno = self.annots[i]
+            rect = anno.annorect
+            if isinstance(rect, scipy.io.matlab.mio5_params.mat_struct):
+                if 'annopoints' in rect._fieldnames:
                     single_person[i] = 1
 
-        self.list = np.nonzero(np.multiply(is_train, single_person))[0]
+        self.list = np.nonzero(single_person)[0]
         self.dim = dim
         self.imagedir = imagedir
         self.n_channels = n_channels
@@ -409,9 +411,11 @@ class myImageDataset(data.Dataset):
         # if self.transform is not None:
         #     image = self.transform(image)
 
-
         rect = anno.annorect
-        points = rect.annopoints.point
+        try:
+            points = rect.annopoints.point
+        except:
+            print('ehihe')
         points_rect = []
         for point in points:
             if point.is_visible in [0, 1]:
@@ -426,7 +430,7 @@ class myImageDataset(data.Dataset):
             ys = points_rect[i][2] * inputsize / h / 4
             points[points_rect[i][0], :] = [xs, ys, points_rect[i][3]]
 
-        return image, torch.Tensor(points)
+        return transforms.ToTensor()(image), torch.Tensor(points)
 
 
 def main():
@@ -441,7 +445,7 @@ def main():
     # test = myImageDataset_COCO(train_set_coco, train_image_dir_coco, mytransform)
     # for i in range(100):
     #     x, y, y1 = test.__getitem__(0)
-    test_loader = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 4, True, num_workers=1)
+    test_loader = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 64, True, num_workers=8)
 
     for step, [x, y_keypoints] in enumerate(test_loader, 0):
         print('esf')
