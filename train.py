@@ -9,20 +9,18 @@ import torchvision
 import torchvision.transforms as transforms
 from torchvision.transforms import functional as transforms_F
 import matplotlib.pyplot as plt
-import json
 from pycocotools.coco import COCO
 from os import path
-import math
 import torch.nn.functional as F
-from scipy import ndimage
 from numpy import matlib
 from torch.optim import lr_scheduler
 from apex import amp
 import matplotlib
 from torch.nn.modules import loss
-from skimage.feature import peak_local_max
 from tensorboardX import SummaryWriter
 import random
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
 
 matplotlib.use('TkAgg')
 
@@ -43,7 +41,6 @@ batch_size = 64
 keypoints = 17
 skeleton = 20
 inputsize = 256
-
 threshold = 0.8
 
 mode = 'train'
@@ -522,7 +519,8 @@ class creatModel(nn.Module):
             ResidualBlock(128, 128),
             ResidualBlock(128, nFeats)
         )
-
+        self.conv1 = nn.Conv2d(nFeats, int(nFeats / 2), 1, 1, 0, bias=False)
+        self.conv2 = nn.Conv2d(nFeats, int(nFeats / 2), 1, 1, 0, bias=False)
         self.stage2 = hourglass(nFeats)
         self.stage2_out = nn.Conv2d(nFeats, nOutChannels_1, 1, 1, 0, bias=False)
         self.stage2_return = nn.Conv2d(nOutChannels_1, int(nFeats / 2), 1, 1, 0, bias=False)
@@ -531,10 +529,10 @@ class creatModel(nn.Module):
         self.stage3 = hourglass(nFeats)
         self.stage3_out = nn.Conv2d(nFeats, nOutChannels_2, 1, 1, 0, bias=False)
 
-    def forward(self, x):
-
+    def forward(self, x, feature):
         out = []
         inter = self.preprocess1(x)
+        inter = torch.cat([self.conv1(inter), self.conv2(feature)], dim=1)
 
         i = 0
 
@@ -572,7 +570,7 @@ class generateMask(nn.Module):
         inter = self.preprocess1(x)
         ll = self.stage1(inter)
         tmpOut = self.stage1_out(ll)
-        return tmpOut
+        return ll, tmpOut
 
 
 class myImageDataset(data.Dataset):
@@ -711,7 +709,7 @@ def main():
         opt = torch.optim.Adam(model.parameters(), lr=1e-3, eps=1e-4)
         # generatemask, mask_opt = amp.initialize(generatemask, mask_opt, opt_level="O1")
         # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(mask_opt, mode='min')
-        generatemask.eval()
+        generatemask.eval().half()
         model, opt = amp.initialize(model, opt, opt_level="O1")
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min')
         model.train()
@@ -731,14 +729,13 @@ def main():
         while epoch <= epochs:
             for i, [x_, y_keypoints, y_skeleton, y_background] in enumerate(imgLoader_train_coco, 0):
                 bx_, by_keypoints, by_skeleton, by_background = x_.cuda(), y_keypoints.cuda(), y_skeleton.cuda(), y_background.cuda()
-                mask = generatemask(bx_)
-                input_after_mask = torch.matmul(bx_, torch.argmax(after_mask, dim=1).unsqueeze(1))
-                result = model(input_after_mask)
+                feature, mask = generatemask(bx_)
+                result = model(bx_, feature)
                 # loss = loss_background.forward(result, by_background)
                 # result = model(bx_)
                 # loss_1 = loss1_background.forward(result[0], by_background)
-                loss_2 = loss2_skeleton.forward(result[0], by_skeleton, torch.argmax(after_mask, dim=1))
-                loss_3 = loss3_keypoints.forward(result[1], by_keypoints, torch.argmax(after_mask, dim=1))
+                loss_2 = loss2_skeleton.forward(result[0], by_skeleton, torch.argmax(mask, dim=1))
+                loss_3 = loss3_keypoints.forward(result[1], by_keypoints, torch.argmax(mask, dim=1))
                 losses = loss_2 + 100 * loss_3
                 opt.zero_grad()
                 with amp.scale_loss(losses, opt) as scaled_loss:
@@ -766,10 +763,11 @@ def main():
                 if i % 100 == 0:
                     steps = i + len(imgLoader_train_coco) * epoch
                     image = torchvision.utils.make_grid(bx_, normalize=True, range=(0, 1))
-                    object = torch.argmax(after_mask, dim=1).unsqueeze(1)
+                    object = torch.argmax(mask, dim=1).unsqueeze(1)
                     object = torchvision.utils.make_grid(object, normalize=True, range=(0, 1))
-                    skeleton = torch.argmax(result[0], dim=1).unsqueeze(1)
-                    skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
+                    cm = ScalarMappable(norm=Normalize(1, 19))
+                    skeleton = cm.to_rgba(torch.argmax(result[0], dim=1).cpu().data)[:, :, :, :3].swapaxes(1, 3)
+                    skeleton = torchvision.utils.make_grid(torch.Tensor(skeleton), normalize=True, range=(0, 1))
 
                     writer.add_image('image', image, steps)
                     writer.add_image('object', object, steps)
