@@ -247,9 +247,9 @@ class myImageDataset_COCO(data.Dataset):
 
         sample['keypoints'] = keypoints_array
         sample['segment'] = segment_array
-        sample = Rescale(320)(sample)
-        sample = RandomCrop(inputsize)(sample)
-        sample = RandomHorizontalFlip()(sample)
+        sample = Rescale(256)(sample)
+        # sample = RandomCrop(inputsize)(sample)
+        # sample = RandomHorizontalFlip()(sample)
 
         # Label_map_keypoints = np.zeros([int(inputsize / 4), int(inputsize / 4)])
         # Label_map_keypoints = Image.fromarray(Label_map_keypoints, 'L')
@@ -322,16 +322,21 @@ class myImageDataset_COCO(data.Dataset):
                                        'rgb({}, {}, {})'.format(i + 1, i + 1, i + 1))
         del draw_skeleton, draw_background
         image = sample['image']
-        image = transforms.ColorJitter(0.5, 0.5, 0.5, 0.3)(image)
-        plt.subplot(1, 4, 1)
+        plt.subplot(1, 2, 1)
         plt.imshow(image)
-        plt.subplot(1, 4, 2)
-        plt.imshow(Label_map_background)
-        plt.subplot(1, 4, 3)
-        plt.imshow(Label_map_skeleton)
-        plt.subplot(1, 4, 4)
-        plt.imshow(Label_map_keypoints)
+        image = transforms.ColorJitter(0.2, 0.2, 0.2, 0.3)(image)
+        plt.subplot(1, 2, 2)
+        plt.imshow(image)
         plt.show()
+        # plt.subplot(1, 4, 1)
+        # plt.imshow(image)
+        # plt.subplot(1, 4, 2)
+        # plt.imshow(Label_map_background)
+        # plt.subplot(1, 4, 3)
+        # plt.imshow(Label_map_skeleton)
+        # plt.subplot(1, 4, 4)
+        # plt.imshow(Label_map_keypoints)
+        # plt.show()
 
         print('esf')
         image_after = self.transform(sample['image'])
@@ -479,9 +484,9 @@ def main():
         transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
     ])
 
-    # test = myImageDataset_COCO(train_set_coco, train_image_dir_coco, mytransform)
-    # for i in range(100):
-    #     x, y, y1 = test.__getitem__(0)
+    test = myImageDataset_COCO(train_set_coco, train_image_dir_coco, mytransform)
+    for i in range(100):
+        x, y, y1, y2 = test.__getitem__(0)
     test_loader = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 16, True, num_workers=1)
 
     for step, [x, y_keypoints] in enumerate(test_loader, 0):

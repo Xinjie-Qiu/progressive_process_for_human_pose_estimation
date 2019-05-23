@@ -38,7 +38,7 @@ nSkeleton = 19
 nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton + 1
 nOutChannels_2 = nKeypoint
-epochs = 1000
+epochs = 300
 batch_size = 64
 keypoints = 17
 skeleton = 20
@@ -46,9 +46,9 @@ inputsize = 256
 
 threshold = 0.8
 
-mode = 'train'
-load_model_name = 'params_1_mask_aspp'
-save_model_name = 'params_2_mask_aspp'
+mode = 'test'
+load_model_name = 'params_3_mask_retrain'
+save_model_name = 'params_3_mask_retrain'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -339,7 +339,7 @@ class Costomer_CrossEntropyLoss(loss._WeightedLoss):
         loss = F.nll_loss(F.log_softmax(input), target, reduce=False)
         k = input.shape[2] * input.shape[3] * fraction
         loss, _ = torch.topk(loss.view(input.shape[0], -1), int(k))
-        loss = loss.sum(dim=1).mean()
+        loss = loss.mean()
         return loss
 
 
@@ -695,23 +695,23 @@ def main():
         generatemask = generateMask().cuda()
         # model = creatModel()
         # model.cuda()
-        loss_background = nn.CrossEntropyLoss().cuda()
-        loss2_skeleton = Costomer_CrossEntropyLoss_with_mask().cuda()
-        loss3_keypoints = Costomer_MSELoss_with_mask().cuda()
+        loss_background = Costomer_CrossEntropyLoss().cuda()
+        # loss2_skeleton = Costomer_CrossEntropyLoss_with_mask().cuda()
+        # loss3_keypoints = Costomer_MSELoss_with_mask().cuda()
         pckh = PCKh()
         mytransform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
+            # transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
         ])
         imgLoader_train_coco = data.DataLoader(
             myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=batch_size,
-            shuffle=True, num_workers=8)
-        imgLoader_eval = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 8, True, num_workers=16)
-        imgIter = iter(imgLoader_eval)
+            shuffle=True, num_workers=16)
+        # imgLoader_eval = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 8, True, num_workers=16)
+        # imgIter = iter(imgLoader_eval)
         mask_opt = torch.optim.Adam(generatemask.parameters(), lr=1e-3, eps=1e-4)
         # opt = torch.optim.Adam(model.parameters(), lr=2.5e-4, eps=1e-4)
         generatemask, mask_opt = amp.initialize(generatemask, mask_opt, opt_level="O1")
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(mask_opt, mode='min')
+        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(mask_opt, mode='min', patience=10)
         generatemask.train()
         # model, opt = amp.initialize(model, opt, opt_level="O1")
         # model.train()
@@ -725,10 +725,10 @@ def main():
             epoch = state['epoch']
 
         while epoch <= epochs:
-            for i, [x_, y_keypoints, y_skeleton, y_background] in enumerate(imgLoader_train_coco, 0):
-                bx_, by_keypoints, by_skeleton, by_background = x_.cuda(), y_keypoints.cuda(), y_skeleton.cuda(), y_background.cuda()
+            for i, [x_, _, _, y_background] in enumerate(imgLoader_train_coco, 0):
+                bx_, by_background = x_.cuda(), y_background.cuda()
                 result = generatemask(bx_)
-                loss = loss_background.forward(result, by_background)
+                loss = loss_background.forward(result, by_background, (epochs - epoch) / epochs)
                 # result = model(bx_)
                 # loss_1 = loss1_background.forward(result[0], by_background)
                 # loss_2 = loss2_skeleton.forward(result[1], by_skeleton, torch.argmax(result[0], dim=1))
@@ -742,8 +742,6 @@ def main():
                 #     scaled_loss.backward()
                 # losses.backward()
                 mask_opt.step()
-                scheduler.step(loss)
-                # scheduler.step(losses)
                 if i % 50 == 0:
                     loss_record = loss.cpu().data.numpy()
                     # loss1_record = loss_1.cpu().data.numpy()
@@ -782,7 +780,7 @@ def main():
                 #     accuracy = pckh(result_, by)
                 #     writer.add_scalar('accuracy', accuracy, steps)
                 #     model.train()
-
+            # scheduler.step(loss)
             epoch += 1
             state = {
                 'epoch': epoch,
@@ -794,9 +792,9 @@ def main():
     elif mode == 'test':
         mytransform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
+            # transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
         ])
-        generatemask = generateMask().cuda().half()
+        generatemask = generateMask().cuda().half().eval()
         state = torch.load(save_model_name)
         generatemask.load_state_dict(state['state_dict'])
         # model = creatModel()
@@ -804,39 +802,45 @@ def main():
         # state = torch.load(save_model_name)
         # model.load_state_dict(state['state_dict'])
         # epoch = state['epoch']
-        test_mode = 'test'
+        test_mode = 'coco'
         if test_mode == 'coco':
 
             imgLoader_val_coco = data.DataLoader(
-                myImageDataset_COCO(train_set_coco, train_image_dir_coco, transform=mytransform), batch_size=1,
-                shuffle=True, num_workers=1)
-            for i, [val_image, val_keypoints, val_skeleton] in enumerate(imgLoader_val_coco):
-                bx_ = val_image.cuda().half()
-                result = model.forward(bx_)
-                # accuracy = pckh(result[3], label.cuda().half())
-                # print(accuracy)
-                results = result[3].cpu().float().data.numpy()
-                # image = (image.cpu().float().numpy()[0].transpose((1, 2, 0)) * 255).astype('uint8')
-                # image = Image.fromarray(image)
-                image = (val_image[0] + 1) / 2
-                image = transforms.ToPILImage()(image)
-                draw = ImageDraw.Draw(image)
-                for i in range(37):
-                    plt.subplot(3, 19, i + 1)
-                    result = results[0, i, :, :]
-
-                    plt.imshow(result)
-                    # for i in range(38):
-                    #     x = result[0, i, :, :]
-                    #     ys, xs = np.multiply(np.where(x == np.max(x)), 4)
-                    # width = 5
-                    # draw.ellipse([xs - width, ys - width, xs + width, ys + width], fill=(0, 255, 0),
-                    #              outline=(255, 0, 0))
-
-                del draw
-                plt.subplot(3, 1, 3)
+                myImageDataset_COCO(val_set_coco, val_image_dir_coco, transform=mytransform), batch_size=8,
+                shuffle=True, num_workers=8)
+            for i, [x_, _, _, y_background] in enumerate(imgLoader_val_coco):
+                bx_ = x_.cuda().half()
+                mask = generatemask.forward(bx_)
+                mask_interpolate = F.interpolate(mask, scale_factor=4)
+                mask_interpolate = torch.argmax(mask_interpolate, dim=1).unsqueeze(1)
+                # for i in range(mask_interpolate.shape[0]):
+                #     image_after = torch.mul(bx_[i, :, :, :], mask_interpolate[i, :, :, :].half())
+                #     # x_ = np.array(bx_[i, :, :, :].cpu())
+                #     # mask_interpolate_inter = np.array(mask_interpolate[i, :, :, :].cpu())
+                #     # image_after = np.multiply(x_, mask_interpolate_inter)
+                #     # image_after = torch.matmul(bx_[i, :, :, :], mask_interpolate[i, 0, :, :].half())
+                #     # image_after = transforms.ToPILImage()(image_after.cpu().float())
+                #     image_after = transforms.ToPILImage()(image_after.cpu().float())
+                #     plt.imshow(image_after)
+                #     print('esfes')
+                image_with_mask = torch.mul(bx_, mask_interpolate.half())
+                image = torchvision.utils.make_grid(bx_, normalize=True, range=(0, 1))
+                image = transforms.ToPILImage()(image.cpu().float())
+                object = torch.argmax(mask, dim=1).unsqueeze(1)
+                object = torchvision.utils.make_grid(object, normalize=True, range=(0, 1))
+                object = transforms.ToPILImage()(object.cpu().float())
+                image_with_mask = torchvision.utils.make_grid(image_with_mask, normalize=True, range=(0, 1))
+                image_with_mask = transforms.ToPILImage()(image_with_mask.cpu().float())
+                plt.subplot(3, 1, 1)
                 plt.imshow(image)
+                plt.subplot(3, 1, 2)
+                plt.imshow(object)
+                plt.subplot(3, 1, 3)
+                plt.imshow(image_with_mask)
                 plt.show()
+
+
+
 
         elif test_mode == 'test':
             image = Image.open('test_img/im6.png').resize([256, 256])
