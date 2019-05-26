@@ -8,7 +8,10 @@ import numpy as np
 import torchvision
 import torchvision.transforms as transforms
 from torchvision.transforms import functional as transforms_F
+import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
 import json
 from pycocotools.coco import COCO
 from os import path
@@ -18,7 +21,7 @@ from scipy import ndimage
 from numpy import matlib
 from torch.optim import lr_scheduler
 from apex import amp
-import matplotlib
+
 from torch.nn.modules import loss
 from skimage.feature import peak_local_max
 from tensorboardX import SummaryWriter
@@ -38,7 +41,7 @@ nSkeleton = 19
 nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton + 1
 nOutChannels_2 = nKeypoint
-epochs = 300
+epochs = 100
 batch_size = 64
 keypoints = 17
 skeleton = 20
@@ -46,9 +49,10 @@ inputsize = 256
 
 threshold = 0.8
 
-mode = 'test'
-load_model_name = 'params_3_mask_retrain'
-save_model_name = 'params_3_mask_retrain'
+mode = 'train'
+load_model_name = 'params_1_skeleton_with_mask'
+save_model_name = 'params_1_skeleton_with_mask'
+load_mask_name = 'params_3_mask_retrain'
 
 train_set = 'train_set.txt'
 eval_set = 'eval_set.txt'
@@ -62,6 +66,8 @@ accuracy_img = save_model_name[:-4] + 'accuracy.png'
 
 rootdir = '/data/lsp_dataset/images/'
 retrain = False
+usemask = True
+write = True
 
 sks = [[15, 13]
     , [13, 11]
@@ -372,6 +378,23 @@ class Costomer_MSELoss_with_mask(loss._WeightedLoss):
         return loss
 
 
+class Costomer_MSELoss(loss._WeightedLoss):
+
+    def __init__(self, weight=None, size_average=None, ignore_index=-100,
+                 reduce=None, reduction='mean'):
+        super(Costomer_MSELoss, self).__init__(weight, size_average, reduce, reduction)
+        self.ignore_index = ignore_index
+
+    def forward(self, input, target, fraction):
+        if fraction < 0.25:
+            fraction = 0.25
+        loss = F.mse_loss(input, target, reduce=False)
+        k = input.shape[2] * input.shape[3] * fraction
+        loss, _ = torch.topk(loss.view(input.shape[0], -1), int(k))
+        loss = loss.mean()
+        return loss
+
+
 class ResidualBlock(nn.Module):
     def __init__(self, numIn, numOut, stride=1):
         super(ResidualBlock, self).__init__()
@@ -525,47 +548,33 @@ class creatModel(nn.Module):
             ResidualBlock(128, 128),
             ResidualBlock(128, nFeats)
         )
-        self.stage1 = hourglass(nFeats)
-
-        self.stage1_out = nn.Conv2d(nFeats, nOutChannels_0, 1, 1, 0, bias=False)
-        self.stage1_return = nn.Conv2d(nOutChannels_0, int(nFeats / 2), 1, 1, 0, bias=False)
-        self.stage1_down_feature = nn.Conv2d(nFeats, int(nFeats / 2), 1, 1, 0, bias=False)
 
         self.stage2 = hourglass(nFeats)
         self.stage2_out = nn.Conv2d(nFeats, nOutChannels_1, 1, 1, 0, bias=False)
-        self.stage2_return = nn.Conv2d(nOutChannels_1, int(nFeats / 2), 1, 1, 0, bias=False)
-        self.stage2_down_feature = nn.Conv2d(nFeats, int(nFeats / 2), 1, 1, 0, bias=False)
-
-        self.stage3 = hourglass(nFeats)
-        self.stage3_out = nn.Conv2d(nFeats, nOutChannels_2, 1, 1, 0, bias=False)
+        # self.stage2_return = nn.Conv2d(nOutChannels_1, int(nFeats / 2), 1, 1, 0, bias=False)
+        # self.stage2_down_feature = nn.Conv2d(nFeats, int(nFeats / 2), 1, 1, 0, bias=False)
+        #
+        # self.stage3 = hourglass(nFeats)
+        # self.stage3_out = nn.Conv2d(nFeats, nOutChannels_2, 1, 1, 0, bias=False)
 
     def forward(self, x):
-        i = 0
         inter = self.preprocess1(x)
         out = []
-        ll = self.stage1(inter)
-        tmpOut = self.stage1_out(ll)
-        out.insert(i, tmpOut)
 
-        tmpOut = self.stage1_return(tmpOut)
-        inter = self.stage1_down_feature(inter)
-        inter = torch.cat([tmpOut, inter], dim=1)
-
-        i = 1
-
+        i = 0
 
         ll = self.stage2(inter)
         tmpOut = self.stage2_out(ll)
         out.insert(i, tmpOut)
-        tmpOut = self.stage2_return(tmpOut)
-        inter = self.stage2_down_feature(inter)
-        inter = torch.cat([tmpOut, inter], dim=1)
-
-        i = 2
-
-        ll = self.stage3(inter)
-        tmpOut = self.stage3_out(ll)
-        out.insert(i, tmpOut)
+        # tmpOut = self.stage2_return(tmpOut)
+        # inter = self.stage2_down_feature(inter)
+        # inter = torch.cat([tmpOut, inter], dim=1)
+        #
+        # i = 1
+        #
+        # ll = self.stage3(inter)
+        # tmpOut = self.stage3_out(ll)
+        # out.insert(i, tmpOut)
 
         return out
 
@@ -691,14 +700,14 @@ def main():
     if mode == 'train':
         image_dir = '/data/lsp_dataset/images'
         mat_dir = '/data/lsp_dataset/joints.mat'
-        writer = SummaryWriter('runs/' + save_model_name)
-        generatemask = generateMask().cuda()
-        # model = creatModel()
-        # model.cuda()
-        loss_background = Costomer_CrossEntropyLoss().cuda()
-        # loss2_skeleton = Costomer_CrossEntropyLoss_with_mask().cuda()
-        # loss3_keypoints = Costomer_MSELoss_with_mask().cuda()
-        pckh = PCKh()
+        if write:
+            writer = SummaryWriter('runs/' + save_model_name)
+        generatemask = generateMask().cuda().half().train()
+        model = creatModel().cuda()
+        # loss_background = Costomer_CrossEntropyLoss().cuda()
+        loss2_skeleton = Costomer_CrossEntropyLoss().cuda()
+        loss3_keypoints = Costomer_MSELoss().cuda()
+        # pckh = PCKh()
         mytransform = transforms.Compose([
             transforms.ToTensor(),
             # transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
@@ -708,61 +717,81 @@ def main():
             shuffle=True, num_workers=16)
         # imgLoader_eval = data.DataLoader(myImageDataset(image_dir, mat_dir, mytransform), 8, True, num_workers=16)
         # imgIter = iter(imgLoader_eval)
-        mask_opt = torch.optim.Adam(generatemask.parameters(), lr=1e-3, eps=1e-4)
-        # opt = torch.optim.Adam(model.parameters(), lr=2.5e-4, eps=1e-4)
-        generatemask, mask_opt = amp.initialize(generatemask, mask_opt, opt_level="O1")
+        # mask_opt = torch.optim.Adam(generatemask.parameters(), lr=1e-3, eps=1e-4)
+        opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+        # generatemask, mask_opt = amp.initialize(generatemask, mask_opt, opt_level="O1")
         # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(mask_opt, mode='min', patience=10)
-        generatemask.train()
-        # model, opt = amp.initialize(model, opt, opt_level="O1")
-        # model.train()
-
+        # generatemask.train()
+        model, opt = amp.initialize(model, opt, opt_level="O1")
+        model.train()
+        if usemask:
+            state = torch.load(load_mask_name)
+            generatemask.load_state_dict(state['state_dict'])
+            for p in generatemask.parameters():
+                p.requires_grad = False
         if retrain or not os.path.isfile(load_model_name):
             epoch = 0
         else:
             state = torch.load(load_model_name)
-            generatemask.load_state_dict(state['state_dict'])
-            mask_opt.load_state_dict(state['optimizer'])
+            model.load_state_dict(state['state_dict'])
+            opt.load_state_dict(state['optimizer'])
             epoch = state['epoch']
 
         while epoch <= epochs:
-            for i, [x_, _, _, y_background] in enumerate(imgLoader_train_coco, 0):
-                bx_, by_background = x_.cuda(), y_background.cuda()
-                result = generatemask(bx_)
-                loss = loss_background.forward(result, by_background, (epochs - epoch) / epochs)
-                # result = model(bx_)
+            for i, [x_, y_keypoints, y_skeleton, _] in enumerate(imgLoader_train_coco, 0):
+                bx_, by_keypoints, by_skeleton = x_.cuda(), y_keypoints.cuda(), y_skeleton.cuda()
+                mask = generatemask(bx_)
+                mask_interpolate = F.interpolate(mask, scale_factor=4)
+                mask_interpolate = torch.argmax(mask_interpolate, dim=1).unsqueeze(1)
+                image_with_mask = torch.mul(bx_, mask_interpolate.half())
+                result = model(image_with_mask)
+                # loss = loss_background.forward(result, by_background, (epochs - epoch) / epochs)
                 # loss_1 = loss1_background.forward(result[0], by_background)
-                # loss_2 = loss2_skeleton.forward(result[1], by_skeleton, torch.argmax(result[0], dim=1))
-                # loss_3 = loss3_keypoints.forward(result[2], by_keypoints, torch.argmax(result[0], dim=1))
-                # losses = loss_1 + loss_2 + 100 * loss_3
-                # opt.zero_grad()
-                mask_opt.zero_grad()
-                with amp.scale_loss(loss, mask_opt) as scaled_loss:
-                    scaled_loss.backward()
-                # with amp.scale_loss(losses, opt) as scaled_loss:
+                loss_2 = loss2_skeleton.forward(result[0], by_skeleton, 0.25)
+                # loss_3 = loss3_keypoints.forward(result[1], by_keypoints, 0.25)
+                losses = loss_2
+                opt.zero_grad()
+                # mask_opt.zero_grad()
+                # with amp.scale_loss(loss, mask_opt) as scaled_loss:
                 #     scaled_loss.backward()
+                with amp.scale_loss(losses, opt) as scaled_loss:
+                    scaled_loss.backward()
                 # losses.backward()
-                mask_opt.step()
+                # mask_opt.step()
+                opt.step()
                 if i % 50 == 0:
-                    loss_record = loss.cpu().data.numpy()
+                    loss_record = losses.cpu().data.numpy()
                     # loss1_record = loss_1.cpu().data.numpy()
-                    # loss2_record = loss_2.cpu().data.numpy()
+                    loss2_record = loss_2.cpu().data.numpy()
                     # loss3_record = loss_3.cpu().data.numpy()
                     steps = i + len(imgLoader_train_coco) * epoch
-                    writer.add_scalar('Loss', loss_record, steps)
-                    # writer.add_scalar('Loss_1', loss1_record, steps)
-                    # writer.add_scalar('Loss_2', loss2_record, steps)
-                    # writer.add_scalar('Loss_3', loss3_record, steps)
+                    if write:
+                        writer.add_scalar('Loss', loss_record, steps)
+                        # writer.add_scalar('Loss_1', loss1_record, steps)
+                        writer.add_scalar('Loss_2', loss2_record, steps)
+                        # writer.add_scalar('Loss_3', loss3_record, steps)
 
-                    print('[{}/{}][{}/{}] Loss: {}'.format(
-                        epoch, epochs, i, len(imgLoader_train_coco), loss_record
+                    print('[{}/{}][{}/{}] Loss: {}, Loss_2: {}'.format(
+                        epoch, epochs, i, len(imgLoader_train_coco), loss_record, loss2_record
                     ))
                 if i % 100 == 0:
-                    steps = i + len(imgLoader_train_coco) * epoch
-                    image = torchvision.utils.make_grid(bx_, normalize=True, range=(0, 1))
-                    object = torch.argmax(result, dim=1).unsqueeze(1)
-                    object = torchvision.utils.make_grid(object, normalize=True, range=(0, 1))
-                    writer.add_image('image', image, steps)
-                    writer.add_image('object', object, steps)
+                    if write:
+                        steps = i + len(imgLoader_train_coco) * epoch
+                        image = torchvision.utils.make_grid(bx_, normalize=True, range=(0, 1))
+                        # object = torch.argmax(result, dim=1).unsqueeze(1)
+                        image_with_mask = torchvision.utils.make_grid(image_with_mask, normalize=True, range=(0, 1))
+                        mask = torch.argmax(mask, dim=1).unsqueeze(1)
+                        skeleton = torch.mul(result[0], mask.half())
+                        cm = ScalarMappable(norm=Normalize(0, 20))
+                        skeleton = torch.argmax(skeleton[:, 1:, :, :], dim=1)
+                        skeleton = torch.Tensor(
+                            cm.to_rgba(np.array(skeleton.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2,
+                                                                                                                      3))
+                        skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
+
+                        writer.add_image('image', image, steps)
+                        writer.add_image('image_with_mask', image_with_mask, steps)
+                        writer.add_image('skeleton', skeleton, steps)
                 # if i % 100 == 0:
                 #     model.eval()
                 #     steps = i + len(imgLoader_train_coco) * epoch
@@ -784,31 +813,29 @@ def main():
             epoch += 1
             state = {
                 'epoch': epoch,
-                'state_dict': generatemask.state_dict(),
-                'optimizer': mask_opt.state_dict(),
+                'state_dict': model.state_dict(),
+                'optimizer': opt.state_dict(),
             }
             torch.save(state, save_model_name)
 
     elif mode == 'test':
+        generatemask = generateMask().cuda().half().eval()
+        model = creatModel().cuda().half().eval()
         mytransform = transforms.Compose([
             transforms.ToTensor(),
             # transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
         ])
-        generatemask = generateMask().cuda().half().eval()
-        state = torch.load(save_model_name)
+        state = torch.load(load_mask_name)
         generatemask.load_state_dict(state['state_dict'])
-        # model = creatModel()
-        # model.eval().cuda().half()
-        # state = torch.load(save_model_name)
-        # model.load_state_dict(state['state_dict'])
-        # epoch = state['epoch']
+        state = torch.load(load_model_name)
+        model.load_state_dict(state['state_dict'])
         test_mode = 'coco'
         if test_mode == 'coco':
 
             imgLoader_val_coco = data.DataLoader(
                 myImageDataset_COCO(val_set_coco, val_image_dir_coco, transform=mytransform), batch_size=8,
                 shuffle=True, num_workers=8)
-            for i, [x_, _, _, y_background] in enumerate(imgLoader_val_coco):
+            for i, [x_, _, y_skeleton, _] in enumerate(imgLoader_val_coco):
                 bx_ = x_.cuda().half()
                 mask = generatemask.forward(bx_)
                 mask_interpolate = F.interpolate(mask, scale_factor=4)
@@ -824,6 +851,25 @@ def main():
                 #     plt.imshow(image_after)
                 #     print('esfes')
                 image_with_mask = torch.mul(bx_, mask_interpolate.half())
+                result = model(image_with_mask)
+
+                # results = torch.argmax(result[0], dim=1)
+                # # for i in range(results.shape[0]):
+                # #     result_inter = results[i]
+                # #     plt.subplot(1, 2, 1)
+                # #     plt.imshow(np.array(y_skeleton[i]))
+                # #     plt.subplot(1, 2, 2)
+                # #     plt.imshow(np.array(result_inter.cpu()))
+                # #     plt.show()
+                # #
+                #     print('efef')
+                for i in range(result[0][0].shape[0]):
+                    result_inter = result[0][0][i]
+                    plt.subplot(3, 10, i + 1)
+                    plt.imshow(result_inter.cpu().data.float().numpy())
+                plt.subplot(3, 1, 3)
+                plt.imshow(transforms.ToPILImage()(image_with_mask[0].cpu().float()))
+                plt.show()
                 image = torchvision.utils.make_grid(bx_, normalize=True, range=(0, 1))
                 image = transforms.ToPILImage()(image.cpu().float())
                 object = torch.argmax(mask, dim=1).unsqueeze(1)
@@ -831,16 +877,25 @@ def main():
                 object = transforms.ToPILImage()(object.cpu().float())
                 image_with_mask = torchvision.utils.make_grid(image_with_mask, normalize=True, range=(0, 1))
                 image_with_mask = transforms.ToPILImage()(image_with_mask.cpu().float())
-                plt.subplot(3, 1, 1)
+                mask = torch.argmax(mask, dim=1).unsqueeze(1)
+                skeleton = torch.mul(result[0], mask.half())
+                cm = ScalarMappable(norm=Normalize(0, 20))
+                skeleton = torch.argmax(skeleton[:, 1:, :, :], dim=1)
+                skeleton = torch.Tensor(
+                    cm.to_rgba(np.array(skeleton.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2, 3))
+                skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
+                skeleton = transforms.ToPILImage()(skeleton)
+
+                plt.subplot(4, 1, 1)
                 plt.imshow(image)
-                plt.subplot(3, 1, 2)
+                plt.subplot(4, 1, 2)
                 plt.imshow(object)
-                plt.subplot(3, 1, 3)
+                plt.subplot(4, 1, 3)
                 plt.imshow(image_with_mask)
+                plt.subplot(4, 1 ,4)
+                plt.imshow(skeleton)
                 plt.show()
-
-
-
+                print('easfeswf')
 
         elif test_mode == 'test':
             image = Image.open('test_img/im6.png').resize([256, 256])
