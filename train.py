@@ -56,8 +56,8 @@ learning_rate = 1e-4
 threshold = 1
 
 mode = 'test'
-load_model_name = 'train_test'
-save_model_name = 'train_test'
+load_model_name = 'params_1_add_cross_entropy_and_bootstrapped_together_fine_tune'
+save_model_name = 'params_1_add_cross_entropy_and_bootstrapped_together_fine_tune'
 # load_mask_name = 'params_1_mask'
 # save_mask_name = 'params_1_mask'
 
@@ -999,7 +999,7 @@ def main():
         model.load_state_dict(state['state_dict'])
 
         # loss_background = Costomer_CrossEntropyLoss().cuda()
-        test_mode = 'mpii'
+        test_mode = 'test'
         if test_mode == 'coco':
 
             imgLoader_val_coco = data.DataLoader(
@@ -1286,45 +1286,45 @@ def main():
                 # print('easfeswf')
 
         elif test_mode == 'test':
-            image = Image.open('test_img/im1.jpg').resize([256, 256])
+            image = Image.open('test_img/images_3.jpeg').resize([256, 256])
             image_normalize = (mytransform(image)).unsqueeze(0).cuda().half()
-            # result = model(image_normalize)
-            # image = torchvision.utils.make_grid(image_normalize, normalize=True, range=(0, 1))
-            # mask = torch.nn.functional.softmax(result[0])
-            # mask = torch.argmax(mask, dim=1).unsqueeze(1)
-            # mask = torchvision.utils.make_grid(mask, normalize=True, range=(0, 1))
-            # cm = ScalarMappable(Normalize(0, 20))
-            # skeleton = torch.nn.functional.softmax(result[1])
-            # skeleton = torch.argmax(skeleton, dim=1)
-            # skeleton = torch.Tensor(
-            #     cm.to_rgba(np.array(skeleton.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2,
-            #                                                                                               3))
-            # skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
-            # keypoints = torch.nn.functional.softmax(result[2])
-            # keypoints = torch.argmax(keypoints[:, :, :, :], dim=1)
-            # keypoints = torch.Tensor(
-            #     cm.to_rgba(np.array(keypoints.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(
-            #         2,
-            #         3))
-            # keypoints = torchvision.utils.make_grid(keypoints, normalize=True, range=(0, 1))
-            time_array = np.array([])
-            for i in range(100):
-                tic = time.process_time()
-                result = model(image_normalize)
-                tif = time.process_time()
-                time_array = np.append(time_array, tif-tic)
-            print('min = {}'.format(time_array.min()))
-            print('mean = {}'.format(time_array.mean()))
-            # plt.subplot(2, 2, 1)
-            # plt.imshow(transforms.ToPILImage()(image.cpu().data.float()))
-            # plt.subplot(2, 2, 2)
-            # plt.imshow(transforms.ToPILImage()(mask.cpu().data.float()))
-            # plt.subplot(2, 2, 3)
-            # plt.imshow(transforms.ToPILImage()(skeleton.cpu().data.float()))
-            # plt.subplot(2, 2, 4)
-            # plt.imshow(transforms.ToPILImage()(keypoints.cpu().data.float()))
-            # plt.show()
-            # print('esfesgt')
+            result = model(image_normalize)
+            image = torchvision.utils.make_grid(image_normalize, normalize=True, range=(0, 1))
+            mask = torch.nn.functional.softmax(result[0])
+            mask = torch.argmax(mask, dim=1).unsqueeze(1)
+            mask = torchvision.utils.make_grid(mask, normalize=True, range=(0, 1))
+            cm = ScalarMappable(Normalize(0, 20))
+            skeleton = torch.nn.functional.softmax(result[1])
+            skeleton = torch.argmax(skeleton, dim=1)
+            skeleton = torch.Tensor(
+                cm.to_rgba(np.array(skeleton.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2,
+                                                                                                          3))
+            skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
+            keypoints = torch.nn.functional.softmax(result[2])
+            keypoints = torch.argmax(keypoints[:, :, :, :], dim=1)
+            keypoints = torch.Tensor(
+                cm.to_rgba(np.array(keypoints.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(
+                    2,
+                    3))
+            keypoints = torchvision.utils.make_grid(keypoints, normalize=True, range=(0, 1))
+            # time_array = np.array([])
+            # for i in range(100):
+            #     tic = time.process_time()
+            #     result = model(image_normalize)
+            #     tif = time.process_time()
+            #     time_array = np.append(time_array, tif-tic)
+            # print('min = {}'.format(time_array.min()))
+            # print('mean = {}'.format(time_array.mean()))
+            plt.subplot(2, 2, 1)
+            plt.imshow(transforms.ToPILImage()(image.cpu().data.float()))
+            plt.subplot(2, 2, 2)
+            plt.imshow(transforms.ToPILImage()(mask.cpu().data.float()))
+            plt.subplot(2, 2, 3)
+            plt.imshow(transforms.ToPILImage()(skeleton.cpu().data.float()))
+            plt.subplot(2, 2, 4)
+            plt.imshow(transforms.ToPILImage()(keypoints.cpu().data.float()))
+            plt.show()
+            print('esfesgt')
 
         print('yyy')
 
