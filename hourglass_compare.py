@@ -27,37 +27,32 @@ from skimage.feature import peak_local_max
 from tensorboardX import SummaryWriter
 import random
 import time
-from torchstat import stat
 
 matplotlib.use('TkAgg')
 
-
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 nModules = 2
 nFeats = 256
 nStack = 3
-nKeypoint_COCO = 17
-nSkeleton_COCO = 19
-nKeypoint_MPII = 16
-nSkeleton_MPII = 15
+nKeypoint = 16
+nSkeleton = 19
 nOutChannels_0 = 2
-nOutChannels_1 = nSkeleton_MPII + 1
-nOutChannels_2 = nKeypoint_MPII + 1
+nOutChannels_1 = 16
+nOutChannels_2 = 17
 epochs = 300
-batch_size = 48
-keypoints = 17
+batch_size = 30
+keypoints = 16
 skeleton = 20
 inputsize = 256
-learning_rate = 1e-4
 
 threshold = 1
 
 mode = 'test'
-load_model_name = 'train_test'
-save_model_name = 'train_test'
+load_model_name = 'params_3_fine_tune'
+save_model_name = 'params_3_fine_tune'
 # load_mask_name = 'params_1_mask'
 # save_mask_name = 'params_1_mask'
 
@@ -75,7 +70,7 @@ rootdir = '/data/lsp_dataset/images/'
 retrain = False
 train_mask = False
 usemask = False
-write = False
+write = True
 fine_tune = False
 dataset = 'mpii'
 
@@ -302,20 +297,20 @@ class myImageDataset_COCO(data.Dataset):
             kp = np.array(label['keypoints'])
             for k in range(keypoints):
                 if v[k] > 0:
-                    # sigma = 1
-                    # mask_x = np.matlib.repmat(x[k], int(inputsize / 4), int(inputsize / 4))
-                    # mask_y = np.matlib.repmat(y[k], int(inputsize / 4), int(inputsize / 4))
-                    #
-                    # x1 = np.arange(int(inputsize / 4))
-                    # x_map = np.matlib.repmat(x1, int(inputsize / 4), 1)
-                    #
-                    # y1 = np.arange(int(inputsize / 4))
-                    # y_map = np.matlib.repmat(y1, int(inputsize / 4), 1)
-                    # y_map = np.transpose(y_map)
-                    #
-                    # temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
-                    #
-                    # Gauss_map[k, :, :] += np.exp(-temp)
+                    sigma = 1
+                    mask_x = np.matlib.repmat(x[k], int(inputsize / 4), int(inputsize / 4))
+                    mask_y = np.matlib.repmat(y[k], int(inputsize / 4), int(inputsize / 4))
+
+                    x1 = np.arange(int(inputsize / 4))
+                    x_map = np.matlib.repmat(x1, int(inputsize / 4), 1)
+
+                    y1 = np.arange(int(inputsize / 4))
+                    y_map = np.matlib.repmat(y1, int(inputsize / 4), 1)
+                    y_map = np.transpose(y_map)
+
+                    temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
+
+                    Gauss_map[k, :, :] += np.exp(-temp)
                     draw_keypoints.point(np.array([x[k], y[k]]).tolist(), 'rgb({}, {}, {})'.format(k + 1, k + 1, k + 1))
             for i, sk in enumerate(sks):
                 if np.all(v[sk] > 0):
@@ -334,8 +329,7 @@ class myImageDataset_COCO(data.Dataset):
 
         # print('esf')
         image_after = self.transform(sample['image'])
-        return image_after, torch.Tensor(
-            np.array(Label_map_keypoints)).long(), torch.Tensor(
+        return image_after, torch.Tensor(Gauss_map), torch.Tensor(
             np.array(Label_map_skeleton)).long(), torch.Tensor(
             np.array(Label_map_background)).long()
 
@@ -500,22 +494,29 @@ class hourglass(nn.Module):
         super(hourglass, self).__init__()
         self.f = f
 
-        self.downsample1 = ResidualBlock(f, f, stride=2)
-        self.downsample2 = ResidualBlock(f, f, stride=2)
-        self.downsample3 = ResidualBlock(f, f, stride=2)
-        self.downsample4 = ResidualBlock(f, f, stride=2)
+        self.downsample1 = nn.Sequential(
+            nn.MaxPool2d(2, 2),
+            ResidualBlock(f, f))
+        self.downsample2 = nn.Sequential(
+            nn.MaxPool2d(2, 2),
+            ResidualBlock(f, f))
+        self.downsample3 = nn.Sequential(
+            nn.MaxPool2d(2, 2),
+            ResidualBlock(f, f))
+        self.downsample4 = nn.Sequential(
+            nn.MaxPool2d(2, 2),
+            ResidualBlock(f, f))
 
-        self.residual1 = ResidualBlock(f, int(f / 2))
-        self.residual2 = ResidualBlock(f, int(f / 2))
-        self.residual3 = ResidualBlock(f, int(f / 2))
-        self.residual4 = ResidualBlock(f, int(f / 2))
+        self.residual1 = ResidualBlock(f, f)
+        self.residual2 = ResidualBlock(f, f)
+        self.residual3 = ResidualBlock(f, f)
+        self.residual4 = ResidualBlock(f, f)
+        self.residual5 = ResidualBlock(f, f)
 
-        self.upsample1 = ResidualBlock(f, int(f / 2))
-        self.upsample2 = ResidualBlock(f, int(f / 2))
-        self.upsample3 = ResidualBlock(f, int(f / 2))
-        self.upsample4 = ResidualBlock(f, int(f / 2))
-
-        self.aspp = ASPP_Block()
+        self.upsample1 = ResidualBlock(f, f)
+        self.upsample2 = ResidualBlock(f, f)
+        self.upsample3 = ResidualBlock(f, f)
+        self.upsample4 = ResidualBlock(f, f)
 
     def forward(self, x):
         up1 = self.residual1(x)
@@ -526,19 +527,19 @@ class hourglass(nn.Module):
         down3 = self.downsample3(down2)
         up4 = self.residual4(down3)
         down4 = self.downsample4(down3)
-        out = self.aspp(down4)
-        out = F.interpolate(out, scale_factor=2)
+        out = self.residual5(down4)
         out = self.upsample4(out)
-        out = torch.cat([out, up4], dim=1)
         out = F.interpolate(out, scale_factor=2)
+        out = out + up4
         out = self.upsample3(out)
-        out = torch.cat([out, up3], dim=1)
         out = F.interpolate(out, scale_factor=2)
+        out = out + up3
         out = self.upsample2(out)
-        out = torch.cat([out, up2], dim=1)
         out = F.interpolate(out, scale_factor=2)
+        out = out + up2
         out = self.upsample1(out)
-        out = torch.cat([out, up1], dim=1)
+        out = F.interpolate(out, scale_factor=2)
+        out = out + up1
         return out
 
 
@@ -547,26 +548,55 @@ class creatModel(nn.Module):
         super(creatModel, self).__init__()
         self.preprocess1 = nn.Sequential(
             nn.Conv2d(3, 64, 7, 2, 3),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
-            ResidualBlock(64, 128, stride=2),
+            ResidualBlock(64, 128),
+            nn.MaxPool2d(2, 2),
             ResidualBlock(128, 128),
             ResidualBlock(128, nFeats)
         )
 
-        self.stage1 = hourglass(nFeats)
-        self.stage1_out = nn.Conv2d(nFeats, nOutChannels_0, 1, 1, 0, bias=False)
-        self.stage1_return = nn.Conv2d(nOutChannels_0, int(nFeats / 2), 1, 1, 0, bias=False)
-        self.stage1_retuen_2 = nn.Conv2d(nFeats, int(nFeats / 4), 1, 1, 0, bias=False)
-        self.stage1_down_feature = nn.Conv2d(nFeats, int(nFeats / 4), 1, 1, 0, bias=False)
+        self.stage1 = nn.Sequential(
+            hourglass(nFeats),
+            ResidualBlock(nFeats, nFeats),
+            nn.Conv2d(nFeats, nFeats, 1, 1, 0),
+            nn.BatchNorm2d(nFeats),
+            nn.ReLU()
+        )
+        self.stage1_out = nn.Conv2d(nFeats, 16, 1, 1, 0, bias=False)
+        self.stage1_return = nn.Conv2d(16, nFeats, 1, 1, 0, bias=False)
+        self.stage1_down_feature = nn.Conv2d(nFeats, nFeats, 1, 1, 0, bias=False)
 
-        self.stage2 = hourglass(nFeats)
-        self.stage2_out = nn.Conv2d(nFeats, nOutChannels_1, 1, 1, 0, bias=False)
-        self.stage2_return = nn.Conv2d(nOutChannels_1, int(nFeats / 2), 1, 1, 0, bias=False)
-        self.stage2_retuen_2 = nn.Conv2d(nFeats, int(nFeats / 4), 1, 1, 0, bias=False)
-        self.stage2_down_feature = nn.Conv2d(nFeats, int(nFeats / 4), 1, 1, 0, bias=False)
+        self.stage2 = nn.Sequential(
+            hourglass(nFeats),
+            ResidualBlock(nFeats, nFeats),
+            nn.Conv2d(nFeats, nFeats, 1, 1, 0),
+            nn.BatchNorm2d(nFeats),
+            nn.ReLU()
+        )
+        self.stage2_out = nn.Conv2d(nFeats, 16, 1, 1, 0, bias=False)
+        self.stage2_return = nn.Conv2d(16, nFeats, 1, 1, 0, bias=False)
+        self.stage2_down_feature = nn.Conv2d(nFeats, nFeats, 1, 1, 0, bias=False)
 
-        self.stage3 = hourglass(nFeats)
-        self.stage3_out = nn.Conv2d(nFeats, nOutChannels_2, 1, 1, 0, bias=False)
+        self.stage3 = nn.Sequential(
+            hourglass(nFeats),
+            ResidualBlock(nFeats, nFeats),
+            nn.Conv2d(nFeats, nFeats, 1, 1, 0),
+            nn.BatchNorm2d(nFeats),
+            nn.ReLU()
+        )
+        self.stage3_out = nn.Conv2d(nFeats, 16, 1, 1, 0, bias=False)
+        self.stage3_return = nn.Conv2d(16, nFeats, 1, 1, 0, bias=False)
+        self.stage3_down_feature = nn.Conv2d(nFeats, nFeats, 1, 1, 0, bias=False)
+
+        self.stage4 = nn.Sequential(
+            hourglass(nFeats),
+            ResidualBlock(nFeats, nFeats),
+            nn.Conv2d(nFeats, nFeats, 1, 1, 0),
+            nn.BatchNorm2d(nFeats),
+            nn.ReLU()
+        )
+        self.stage4_out = nn.Conv2d(nFeats, 16, 1, 1, 0, bias=False)
 
     def forward(self, x):
         inter = self.preprocess1(x)
@@ -578,9 +608,8 @@ class creatModel(nn.Module):
         tmpOut = self.stage1_out(ll)
         out.insert(i, tmpOut)
         tmpOut = self.stage1_return(tmpOut)
-        ll_ = self.stage1_retuen_2(ll)
-        inter = self.stage1_down_feature(inter)
-        inter = torch.cat([tmpOut, ll_, inter], dim=1)
+        ll_ = self.stage1_down_feature(ll)
+        inter = tmpOut + inter + ll_
 
         i = 1
 
@@ -588,14 +617,22 @@ class creatModel(nn.Module):
         tmpOut = self.stage2_out(ll)
         out.insert(i, tmpOut)
         tmpOut = self.stage2_return(tmpOut)
-        ll_ = self.stage2_retuen_2(ll)
-        inter = self.stage2_down_feature(inter)
-        inter = torch.cat([tmpOut, ll_, inter], dim=1)
+        ll_ = self.stage2_down_feature(ll)
+        inter = tmpOut + inter + ll_
 
         i = 2
 
         ll = self.stage3(inter)
         tmpOut = self.stage3_out(ll)
+        out.insert(i, tmpOut)
+        tmpOut = self.stage3_return(tmpOut)
+        ll_ = self.stage3_down_feature(ll)
+        inter = tmpOut + inter + ll_
+
+        i = 3
+
+        ll = self.stage4(inter)
+        tmpOut = self.stage4_out(ll)
         out.insert(i, tmpOut)
 
         return out
@@ -657,7 +694,7 @@ class myImageDataset(data.Dataset):
         points_all = []
 
         points = rect.annopoints.point
-        points_rect = np.zeros([nKeypoint_MPII, 3])
+        points_rect = np.zeros([16, 3])
         for point in points:
             if point.is_visible == 0:
                 is_visible = 0
@@ -673,12 +710,28 @@ class myImageDataset(data.Dataset):
         Label_skeleton = Image.fromarray(Label_skeleton, 'L')
         draw_skeleton = ImageDraw.Draw(Label_skeleton)
 
+        Gauss_map = np.zeros([16, int(inputsize / 4), int(inputsize / 4)])
+
         xs = points_rect[:, 0] * inputsize / w / 4
         ys = points_rect[:, 1] * inputsize / h / 4
         v = points_rect[:, 2]
 
-        for i in range(nKeypoint_MPII):
+        for i in range(nKeypoint):
             if v[i] > 0:
+                sigma = 1
+                mask_x = np.matlib.repmat(xs[i], int(inputsize / 4), int(inputsize / 4))
+                mask_y = np.matlib.repmat(ys[i], int(inputsize / 4), int(inputsize / 4))
+
+                x1 = np.arange(int(inputsize / 4))
+                x_map = np.matlib.repmat(x1, int(inputsize / 4), 1)
+
+                y1 = np.arange(int(inputsize / 4))
+                y_map = np.matlib.repmat(y1, int(inputsize / 4), 1)
+                y_map = np.transpose(y_map)
+
+                temp = ((x_map - mask_x) ** 2 + (y_map - mask_y) ** 2) / (2 * sigma ** 2)
+
+                Gauss_map[i, :, :] += np.exp(-temp)
                 size = 1
                 xs_low, ys_low, xs_high, ys_high = xs[i] - size / 2, ys[i] - size / 2, xs[i] + size / 2, ys[
                     i] + size / 2
@@ -692,6 +745,7 @@ class myImageDataset(data.Dataset):
         rect = anno.annorect
         rect = [rect.x1 * inputsize / w / 4, rect.y1 * inputsize / h / 4, rect.x2 * inputsize / w / 4,
                 rect.y2 * inputsize / h / 4]
+
         # cm = ScalarMappable(norm=Normalize(0, 15))
         # cm.set_array(np.array(Label_skeleton))
         # result = cm.to_rgba(np.array(Label_skeleton.resize([256, 256])))[:, :, :3]
@@ -702,7 +756,6 @@ class myImageDataset(data.Dataset):
         # plt.subplot(1, 3, 3)
         # plt.imshow(np.array(Label_skeleton))
         # plt.show()
-        # print('ef')
 
         return transforms.ToTensor()(image).float(), torch.Tensor(np.array(Label_keypoints)).long(), torch.Tensor(
             np.array(Label_skeleton)).long(), torch.Tensor(np.array(rect))
@@ -775,7 +828,7 @@ class PCKh(nn.Module):
                     label_ys, label_xs = torch.nonzero(target[i] == (j + 1))[0]
                 except:
                     continue
-                predict_ys, predict_xs = torch.nonzero(x[i, j + 1, :, :] >= torch.max(x[i, j + 1, :, :]))[0]
+                predict_ys, predict_xs = torch.nonzero(x[i, j, :, :] >= torch.max(x[i, j, :, :]))[0]
                 distance = torch.sqrt(
                         (torch.pow(label_ys - predict_ys, 2) + torch.pow(label_xs - predict_xs,
                                                                          2)).float()) / standard
@@ -797,12 +850,10 @@ def main():
             writer = SummaryWriter('runs/' + save_model_name)
         # generatemask = generateMask().cuda()
         model = creatModel()
-        loss1_background = Costomer_CrossEntropyLoss().cuda()
-        loss1_background_normal = nn.CrossEntropyLoss().cuda()
-        loss2_skeleton = Costomer_CrossEntropyLoss().cuda()
-        loss2_skeleton_normal = nn.CrossEntropyLoss().cuda()
-        loss3_keypoints = Costomer_CrossEntropyLoss().cuda()
-        loss3_keypoints_normal = nn.CrossEntropyLoss().cuda()
+        loss1_keypoints = nn.MSELoss().cuda()
+        loss2_keypoints = nn.MSELoss().cuda()
+        loss3_keypoints = nn.MSELoss().cuda()
+        loss4_keypoints = nn.MSELoss().cuda()
         # pckh = PCKh()
         mytransform = transforms.Compose([
             transforms.ToTensor(),
@@ -831,7 +882,7 @@ def main():
         # generatemask, mask_opt = amp.initialize(generatemask, mask_opt, opt_level="O1")
         # generatemask.eval()
 
-        opt = torch.optim.Adam(model.parameters(), lr=learning_rate, eps=1e-4)
+        opt = torch.optim.Adam(model.parameters(), lr=1e-4, eps=1e-4)
         model.cuda()
         model, opt = amp.initialize(model, opt, opt_level="O1")
         model.train()
@@ -872,10 +923,8 @@ def main():
                 epoch = state['epoch']
 
         while epoch <= epochs:
-            # for i, [x_, y_keypoints, y_skeleton, y_background] in enumerate(imgLoader_train, 0):
             for i, [x_, y_keypoints, y_skeleton, _] in enumerate(imgLoader_train, 0):
-                bx_, by_keypoints, by_skeleton = x_.cuda().half(), y_keypoints.cuda(), y_skeleton.cuda()
-                # bx_, by_keypoints, by_skeleton, by_background = x_.cuda().half(), y_keypoints.cuda(), y_skeleton.cuda(), y_background.cuda()
+                bx_, by_keypoints, by_skeleton = x_.cuda(), y_keypoints.cuda(), y_skeleton.cuda()
                 # bx_, by_keypoints, by_skeleton, by_background = x_.cuda(), y_keypoints.cuda(), y_skeleton.cuda(), y_background.cuda()
                 # mask = generatemask(bx_)
                 # mask_interpolate = F.interpolate(mask, scale_factor=4)
@@ -883,11 +932,13 @@ def main():
                 # image_with_mask = torch.mul(bx_, mask_interpolate.half())
                 result = model(bx_)
                 # losses = loss_background.forward(mask, by_background, (epochs - epoch) / epochs)
-                # loss_1 = loss1_background.forward(result[0], by_background, (epochs - epoch) / epochs) + loss1_background_normal.forward(result[0], by_background)
-                loss_2 = loss2_skeleton.forward(result[1], by_skeleton, (100 - epoch) / 100) + loss2_skeleton_normal.forward(result[1], by_skeleton)
-                loss_3 = loss3_keypoints.forward(result[2], by_keypoints, (100 - epoch) / 100) + loss3_keypoints_normal.forward(result[2], by_keypoints)
-                # losses = loss_1 + loss_2 + loss_3
-                losses = loss_2 + loss_3
+                # loss_1 = loss1_background.forward(result[0], by_background, (epochs - epoch) / epochs)
+                loss_1 = loss1_keypoints.forward(result[0], by_keypoints)
+                loss_2 = loss2_keypoints.forward(result[1], by_keypoints)
+                loss_3 = loss3_keypoints.forward(result[2], by_keypoints)
+                loss_4 = loss4_keypoints.forward(result[3], by_keypoints)
+
+                losses = loss_1 + loss_2 + loss_3 + loss_4
                 opt.zero_grad()
                 # mask_opt.zero_grad()
                 # with amp.scale_loss(losses, mask_opt) as scaled_loss:
@@ -899,61 +950,63 @@ def main():
                 opt.step()
                 if i % 50 == 0:
                     loss_record = losses.cpu().data.numpy()
-                    # loss1_record = loss_1.cpu().data.numpy()
+                    loss1_record = loss_1.cpu().data.numpy()
                     loss2_record = loss_2.cpu().data.numpy()
                     loss3_record = loss_3.cpu().data.numpy()
+                    loss4_record = loss_4.cpu().data.numpy()
                     steps = i + len(imgLoader_train) * epoch
                     if write:
                         writer.add_scalar('Loss', loss_record, steps)
-                        # writer.add_scalar('Loss_1', loss1_record, steps)
+                        writer.add_scalar('Loss_1', loss1_record, steps)
                         writer.add_scalar('Loss_2', loss2_record, steps)
                         writer.add_scalar('Loss_3', loss3_record, steps)
+                        writer.add_scalar('Loss_4', loss4_record, steps)
 
                     print('[{}/{}][{}/{}] Loss: {}'.format(
                         epoch, epochs, i, len(imgLoader_train), loss_record
                     ))
-                if i % 100 == 0:
-                    if write:
-                        # try:
-                        #     x_, y_keypoints, _, _, rect = imgIter_eval.next()
-                        # except:
-                        #     imgIter_eval = iter(imgLoader_eval)
-                        #     x_, y_keypoints, _, _, rect = imgIter_eval.next()
-                        #
-                        # steps = i + len(imgLoader_train) * epoch
-                        # bx_, by_keypoints, by_skeleton = x_.cuda().half(), y_keypoints.cuda(), y_skeleton.cuda()
-                        # # bx_, by_background = x_.cuda(), y_background.cuda()
-                        # mask = generatemask(bx_)
-                        # mask_interpolate = F.interpolate(mask, scale_factor=4)
-                        # mask_interpolate = torch.argmax(mask_interpolate, dim=1).unsqueeze(1)
-                        # image_with_mask = torch.mul(bx_, mask_interpolate.half())
-                        # result = model(image_with_mask)
-                        image = torchvision.utils.make_grid(bx_, normalize=True, range=(0, 1))
-                        mask = torch.nn.functional.softmax(result[0])
-                        mask = torch.argmax(mask, dim=1).unsqueeze(1)
-                        mask = torchvision.utils.make_grid(mask, normalize=True, range=(0, 1))
-                        # object = torch.argmax(result, dim=1).unsqueeze(1)
-                        # image_with_mask = torchvision.utils.make_grid(image_with_mask, normalize=True, range=(0, 1))
-                        # mask = torch.argmax(mask, dim=1).unsqueeze(1)
-                        cm = ScalarMappable(Normalize(0, 20))
-                        skeleton = torch.nn.functional.softmax(result[1])
-                        skeleton = torch.argmax(skeleton, dim=1)
-                        skeleton = torch.Tensor(
-                            cm.to_rgba(np.array(skeleton.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2,
-                                                                                                                      3))
-                        skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
-                        keypoints = torch.nn.functional.softmax(result[2])
-                        keypoints = torch.argmax(keypoints[:, :, :, :], dim=1)
-                        keypoints = torch.Tensor(
-                            cm.to_rgba(np.array(keypoints.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(
-                                2,
-                                3))
-                        keypoints = torchvision.utils.make_grid(keypoints, normalize=True, range=(0, 1))
-
-                        writer.add_image('image', image, steps)
-                        writer.add_image('mask', mask, steps)
-                        writer.add_image('skeleton', skeleton, steps)
-                        writer.add_image('keypoints', keypoints, steps)
+                # if i % 100 == 0:
+                #     if write:
+                #         # try:
+                #         #     x_, y_keypoints, y_skeleton, rect = imgIter_eval.next()
+                #         # except:
+                #         #     imgIter_eval = iter(imgLoader_eval)
+                #         #     x_, y_keypoints, y_skeleton, rect = imgIter_eval.next()
+                #         #
+                #         # steps = i + len(imgLoader_train) * epoch
+                #         # bx_, by_keypoints, by_skeleton = x_.cuda().half(), y_keypoints.cuda(), y_skeleton.cuda()
+                #         # # bx_, by_background = x_.cuda(), y_background.cuda()
+                #         # mask = generatemask(bx_)
+                #         # mask_interpolate = F.interpolate(mask, scale_factor=4)
+                #         # mask_interpolate = torch.argmax(mask_interpolate, dim=1).unsqueeze(1)
+                #         # image_with_mask = torch.mul(bx_, mask_interpolate.half())
+                #         # result = model(image_with_mask)
+                #         image = torchvision.utils.make_grid(bx_, normalize=True, range=(0, 1))
+                #         mask = torch.nn.functional.softmax(result[0])
+                #         mask = torch.argmax(mask, dim=1).unsqueeze(1)
+                #         mask = torchvision.utils.make_grid(mask, normalize=True, range=(0, 1))
+                #         # object = torch.argmax(result, dim=1).unsqueeze(1)
+                #         # image_with_mask = torchvision.utils.make_grid(image_with_mask, normalize=True, range=(0, 1))
+                #         # mask = torch.argmax(mask, dim=1).unsqueeze(1)
+                #         cm = ScalarMappable(Normalize(0, 20))
+                #         skeleton = torch.nn.functional.softmax(result[1])
+                #         skeleton = torch.argmax(skeleton, dim=1)
+                #         skeleton = torch.Tensor(
+                #             cm.to_rgba(np.array(skeleton.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2,
+                #                                                                                                       3))
+                #         skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
+                #         keypoints = torch.nn.functional.softmax(result[2])
+                #         keypoints = torch.argmax(keypoints[:, :, :, :], dim=1)
+                #         keypoints = torch.Tensor(
+                #             cm.to_rgba(np.array(keypoints.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(
+                #                 2,
+                #                 3))
+                #         keypoints = torchvision.utils.make_grid(keypoints, normalize=True, range=(0, 1))
+                #
+                #         writer.add_image('image', image, steps)
+                #         writer.add_image('mask', mask, steps)
+                #         writer.add_image('skeleton', skeleton, steps)
+                #         writer.add_image('keypoints', keypoints, steps)
                 # if i % 100 == 0:
                 #     model.eval()
                 #     steps = i + len(imgLoader_train_coco) * epoch
@@ -988,7 +1041,7 @@ def main():
 
     elif mode == 'test':
         # generatemask = generateMask().cuda().half().eval()
-        model = creatModel().cuda().eval().half()
+        model = creatModel().cuda().half().eval()
         mytransform = transforms.Compose([
             transforms.ToTensor(),
             # transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
@@ -999,7 +1052,7 @@ def main():
         model.load_state_dict(state['state_dict'])
 
         # loss_background = Costomer_CrossEntropyLoss().cuda()
-        test_mode = 'mpii'
+        test_mode = 'test'
         if test_mode == 'coco':
 
             imgLoader_val_coco = data.DataLoader(
@@ -1007,35 +1060,7 @@ def main():
                 shuffle=True, num_workers=1)
             for i, [x_, _, y_skeleton, y_background] in enumerate(imgLoader_val_coco):
                 bx_, by_background = x_.cuda().half(), y_background.cuda()
-                mask = generatemask.forward(bx_)
-                # loss, maps = loss_background(mask, by_background, 0.75)
-                # loss, maps_1 = loss_background(mask, by_background, 0.50)
-                # loss, maps_2 = loss_background(mask, by_background, 0.25)
-
-                # plt.subplot(2, 2, 1)
-                # plt.imshow(transforms.ToPILImage()(x_[0]))
-                # plt.subplot(2, 2, 2)
-                # plt.imshow(maps)
-                # plt.subplot(2, 2, 3)
-                # plt.imshow(maps_1)
-                # plt.subplot(2, 2, 4)
-                # plt.imshow(maps_2)
-                # plt.show()
-                # print('sefe')
-                mask_interpolate = F.interpolate(mask, scale_factor=4)
-                mask_interpolate = torch.argmax(mask_interpolate, dim=1).unsqueeze(1)
-                # for i in range(mask_interpolate.shape[0]):
-                #     image_after = torch.mul(bx_[i, :, :, :], mask_interpolate[i, :, :, :].half())
-                #     # x_ = np.array(bx_[i, :, :, :].cpu())
-                #     # mask_interpolate_inter = np.array(mask_interpolate[i, :, :, :].cpu())
-                #     # image_after = np.multiply(x_, mask_interpolate_inter)
-                #     # image_after = torch.matmul(bx_[i, :, :, :], mask_interpolate[i, 0, :, :].half())
-                #     # image_after = transforms.ToPILImage()(image_after.cpu().float())
-                #     image_after = transforms.ToPILImage()(image_after.cpu().float())
-                #     plt.imshow(image_after)
-                #     print('esfes')
-                image_with_mask = torch.mul(bx_, mask_interpolate.half())
-                result = model(image_with_mask)
+                result = model(bx_)
 
                 # results = torch.argmax(result[1], dim=1)
                 # for i in range(results.shape[0]):
@@ -1056,11 +1081,12 @@ def main():
                 #     plt.subplot(3, 1, 3)
                 #     plt.imshow(transforms.ToPILImage()(image_with_mask[i].cpu().float()))
                 #     plt.show()
-                #     print('esfe')
-                for i in range(result[1].shape[0]):
+                #     print('
+                results = result[3]
+                for i in range(results.shape[0]):
                     image = transforms.ToPILImage()(x_[i])
                     image_draw = ImageDraw.Draw(image)
-                    keypoints_every = result[1][i]
+                    keypoints_every = results[i]
                     for j in range(keypoints_every.shape[0] - 1):
                         result_inter = keypoints_every[j + 1]
                         xs, ys = torch.nonzero(result_inter >= torch.max(result_inter))[0]
@@ -1069,7 +1095,7 @@ def main():
                         plt.subplot(3, 10, j + 1)
                         plt.imshow(result_inter.cpu().data.float().numpy())
                     plt.subplot(3, 1, 3)
-                    plt.imshow(transforms.ToPILImage()(image_with_mask[i].cpu().float()))
+                    plt.imshow(image)
                     plt.show()
                     print('sefesf')
 
@@ -1123,19 +1149,18 @@ def main():
             eval_set = 'mpii/eval.txt'
             test_set = 'mpii/test.txt'
             pckh = PCKh().cuda()
-            imgLoader_eval = data.DataLoader(myImageDataset(test_set, image_dir, mat_dir, mytransform),
-                                             batch_size=16,
-                                             shuffle=False, num_workers=16)
+            imgLoader_test = data.DataLoader(myImageDataset(test_set, image_dir, mat_dir, mytransform),
+                                             batch_size=8,
+                                             shuffle=False, num_workers=4)
             accryacy_every = []
-            for i, [x_, y_keypoints, _, rect] in enumerate(imgLoader_eval):
+            for i, [x_, y_keypoints, _, rect] in enumerate(imgLoader_test):
                 bx_ = x_.cuda().half()
                 result = model(bx_)
-            #
+
                 accuracy, pred, label = pckh.forward(nn.functional.softmax(result[2]), y_keypoints, rect)
                 accryacy_every.append(accuracy)
             accryacy_every = np.concatenate(accryacy_every, axis=0)
             accuracy_mean = accryacy_every.mean(axis=0)
-
 
             plt.plot(np.arange(0, 0.55, 0.05), accuracy_mean * 100)
             plt.xticks(np.arange(0, 0.55, 0.05))
@@ -1143,188 +1168,109 @@ def main():
             plt.xlabel('Normalized distance')
             plt.ylabel('Detection rate, %')
             plt.show()
-            print('sefehsop')
-                #
-                # print('esf')
-                # results = torch.argmax(result[1], dim=1)
-                # for i in range(results.shape[0]):
-                #     result_inter = results[i]
-                #     plt.subplot(1, 2, 1)
-                #     plt.imshow(np.array(y_skeleton[i]))
-                #     plt.subplot(1, 2, 2)
-                #     plt.imshow(np.array(result_inter.cpu()))
-                #     plt.show()
-                # # #
-                # # # print('efef')
-                # # # for i in range(result[1].shape[0]):
-                # # #     result_every = result[0][i]
-                # # #     for j in range(result_every.shape[0]):
-                # # #         result_inter = result_every[j]
-                # # #         plt.subplot(3, 10, j + 1)
-                # # #         plt.imshow(result_inter.cpu().data.float().numpy())
-                # # #     plt.subplot(3, 1, 3)
-                # # #     plt.imshow(transforms.ToPILImage()(image_with_mask[i].cpu().float()))
-                # # #     plt.show()
-                # # #     print('esfe')
-                # if accuracy.max() > 0.9:
-                #     image = torchvision.utils.make_grid(bx_, normalize=True, range=(0, 1))
-                #     mask = torch.nn.functional.softmax(result[0])
-                #     mask = torch.argmax(mask, dim=1).unsqueeze(1)
-                #     mask = torchvision.utils.make_grid(mask, normalize=True, range=(0, 1))
-                #     # object = torch.argmax(result, dim=1).unsqueeze(1)
-                #     # image_with_mask = torchvision.utils.make_grid(image_with_mask, normalize=True, range=(0, 1))
-                #     # mask = torch.argmax(mask, dim=1).unsqueeze(1)
-                #     cm = ScalarMappable(Normalize(0, 20))
-                #     skeleton = torch.nn.functional.softmax(result[1])
-                #     skeleton = torch.argmax(skeleton[:, 1:, :, :], dim=1)
-                #     skeleton = torch.Tensor(
-                #         cm.to_rgba(np.array(skeleton.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2,
-                #                                                                                                   3))
-                #     skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
-                #     keypoints = torch.nn.functional.softmax(result[2])
-                #     keypoints = torch.argmax(keypoints[:, 1:, :, :], dim=1)
-                #     keypoints = torch.Tensor(
-                #         cm.to_rgba(np.array(keypoints.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(
-                #             2,
-                #             3))
-                #     keypoints = torchvision.utils.make_grid(keypoints, normalize=True, range=(0, 1))
-                #     plt.subplot(2, 2, 1)
-                #     plt.imshow(transforms.ToPILImage()(image.cpu().float()))
-                #     plt.subplot(2, 2, 2)
-                #     plt.imshow(transforms.ToPILImage()(mask.cpu().float()))
-                #     plt.subplot(2, 2, 3)
-                #     plt.imshow(transforms.ToPILImage()(skeleton.cpu().float()))
-                #     plt.subplot(2, 2, 4)
-                #     plt.imshow(transforms.ToPILImage()(keypoints.cpu().float()))
-                #     plt.show()
-                #     print('esf')
-                # for i in range(len(pred)):
-                #     image = transforms.ToPILImage()(x_[i])
-                #     image = image.resize([64, 64])
-                #     label_image = Image.fromarray(np.zeros_like(np.array(image)))
-                #     image_draw = ImageDraw.Draw(image)
-                #     label_draw = ImageDraw.Draw(label_image)
-                #     # Label_keypoints = np.zeros([64,64])
-                #     # Label_keypoints = Image.fromarray(Label_keypoints, 'L')
-                #     # draw_keypoints = ImageDraw.Draw(Label_keypoints)
-                #     for j in range(pred[i].shape[0]):
-                #         xs, ys = pred[i][j]
-                #         x_label, y_label = label[i][j]
-                #         if not(xs == 0 and ys == 0):
-                #             size = 2
-                #             xs_low = xs - size/2
-                #             ys_low = ys - size/2
-                #             xs_high = xs + size/2
-                #             ys_high = ys + size/2
-                #             # image_draw.ellipse((xs_low, ys_low, xs_high, ys_high), fill='rgb({}, {}, {})'.format(255, 0, 0))
-                #             image_draw.point((xs, ys), fill='rgb(255, 0, 0)')
-                #             x_label_low = x_label - size / 2
-                #             y_label_low = y_label - size / 2
-                #             x_label_high = x_label + size / 2
-                #             y_label_high = y_label + size / 2
-                #             label_draw.point((x_label, y_label), fill='rgb(255,0,0)')
-                #             # label_draw.ellipse((x_label_low, y_label_low, x_label_high, y_label_high),
-                #             #                    fill='rgb({}, {}, {})'.format(255, 0, 0))
-                #
-                #             # draw_keypoints.point([xs, ys], fill='rgb({}, {}, {})'.format(j+1, j+1, j+1))
-                #     # x1, y1, x2, y2 = rect[i]
-                #     # image_draw.rectangle((x1 * 4, y1 * 4, x2 * 4, y2 * 4), outline='rgb(0, 255, 0)')
-                #     for j, sk in enumerate(sks):
-                #         if np.all(label[i][sk]) > 0:
-                #             label_draw.line((label[i][sk][0][0], label[i][sk][1][0], label[i][sk][0][1], label[i][sk][1][1]),
-                #                                'rgb({}, {}, {})'.format(i + 1, i + 1, i + 1))
-                #     plt.subplot(1, 2, 1)
-                #     plt.imshow(image)
-                #     plt.subplot(1, 2, 2)
-                #     plt.imshow(label_image)
-                #     plt.show()
-                #     print(accuracy[i])
-                #     print('sefesf')
+            print('esfe')
+            #
+            # print('esf')
+            # # # results = torch.argmax(result[1], dim=1)
+            # # # for i in range(results.shape[0]):
+            # # #     result_inter = results[i]
+            # # #     plt.subplot(1, 2, 1)
+            # # #     plt.imshow(np.array(y_skeleton[i]))
+            # # #     plt.subplot(1, 2, 2)
+            # # #     plt.imshow(np.array(result_inter.cpu()))
+            # # #     plt.show()
+            # # #
+            # # # print('efef')
+            # # # for i in range(result[1].shape[0]):
+            # # #     result_every = result[0][i]
+            # # #     for j in range(result_every.shape[0]):
+            # # #         result_inter = result_every[j]
+            # # #         plt.subplot(3, 10, j + 1)
+            # # #         plt.imshow(result_inter.cpu().data.float().numpy())
+            # # #     plt.subplot(3, 1, 3)
+            # # #     plt.imshow(transforms.ToPILImage()(image_with_mask[i].cpu().float()))
+            # # #     plt.show()
+            # # #     print('esfe')
+            # for i in range(len(pred)):
+            #     image = transforms.ToPILImage()(x_[i])
+            #     image_draw = ImageDraw.Draw(image)
+            #     # Label_keypoints = np.zeros([64,64])
+            #     # Label_keypoints = Image.fromarray(Label_keypoints, 'L')
+            #     # draw_keypoints = ImageDraw.Draw(Label_keypoints)
+            #     for j in range(pred[i].shape[0]):
+            #         xs, ys = pred[i][j]
+            #         if not(xs == 0 and ys == 0):
+            #             size = 2
+            #             xs_low =  xs * 4 - size/2
+            #             ys_low = ys * 4 - size/2
+            #             xs_high = xs * 4 + size/2
+            #             ys_high = ys * 4 + size/2
+            #             image_draw.ellipse((xs_low, ys_low, xs_high, ys_high), fill='rgb({}, {}, {})'.format(255, 0, 0))
+            #             # draw_keypoints.point([xs, ys], fill='rgb({}, {}, {})'.format(j+1, j+1, j+1))
+            #     # x1, y1, x2, y2 = rect[i]
+            #     # image_draw.rectangle((x1 * 4, y1 * 4, x2 * 4, y2 * 4), outline='rgb(0, 255, 0)')
+            #     plt.subplot(1, 2, 1)
+            #     plt.imshow(image)
+            #     plt.subplot(1, 2, 2)
+            #     plt.imshow(y_keypoints[i])
+            #     plt.show()
+            #     print('sefesf')
 
-                # # image = torchvision.utils.make_grid(bx_, normalize=True, range=(0, 1))
-                # # image = transforms.ToPILImage()(image.cpu().float())
-                # # object = torch.argmax(mask, dim=1).unsqueeze(1)
-                # # object = torchvision.utils.make_grid(object, normalize=True, range=(0, 1))
-                # # object = transforms.ToPILImage()(object.cpu().float())
-                # # image_with_mask = torchvision.utils.make_grid(image_with_mask, normalize=True, range=(0, 1))
-                # # image_with_mask = transforms.ToPILImage()(image_with_mask.cpu().float())
-                # # plt.subplot(2, 1, 1)
-                # # plt.imshow(image)
-                # # plt.subplot(2, 1, 2)
-                # # plt.imshow(image_with_mask)
-                # # plt.show()
-                # mask = torch.argmax(mask, dim=1).unsqueeze(1)
-                # skeleton = torch.mul(result[0], mask.half())
-                # cm = ScalarMappable(norm=Normalize(0, 20))
-                # skeleton = torch.argmax(skeleton[:, 1:, :, :], dim=1)
-                # skeleton = torch.Tensor(
-                #     cm.to_rgba(np.array(skeleton.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2, 3))
-                # skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
-                # skeleton = transforms.ToPILImage()(skeleton)
-                # skeleton_all = torch.argmax(result[0][:, 1:, :, :], dim=1)
-                # skeleton_all = torch.Tensor(
-                #     cm.to_rgba(np.array(skeleton_all.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2, 3))
-                # skeleton_all = torchvision.utils.make_grid(skeleton_all, normalize=True, range=(0, 1))
-                # skeleton_all = transforms.ToPILImage()(skeleton_all)
-                # keypoints = torch.mul(result[1], mask.half())
-                # cm = ScalarMappable(norm=Normalize(0, 20))
-                # keypoints = torch.argmax(keypoints[:, 1:, :, :], dim=1)
-                # keypoints = torch.Tensor(
-                #     cm.to_rgba(np.array(keypoints.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2, 3))
-                # keypoints = torchvision.utils.make_grid(keypoints, normalize=True, range=(0, 1))
-                # keypoints = transforms.ToPILImage()(keypoints)
-                #
-                # plt.subplot(4, 1, 1)
-                # plt.imshow(image)
-                # plt.subplot(4, 1, 2)
-                # plt.imshow(image_with_mask)
-                # plt.subplot(4, 1, 3)
-                # plt.imshow(keypoints)
-                # plt.subplot(4, 1, 4)
-                # plt.imshow(skeleton)
-                # plt.show()
-                # print('easfeswf')
+            # # image = torchvision.utils.make_grid(bx_, normalize=True, range=(0, 1))
+            # # image = transforms.ToPILImage()(image.cpu().float())
+            # # object = torch.argmax(mask, dim=1).unsqueeze(1)
+            # # object = torchvision.utils.make_grid(object, normalize=True, range=(0, 1))
+            # # object = transforms.ToPILImage()(object.cpu().float())
+            # # image_with_mask = torchvision.utils.make_grid(image_with_mask, normalize=True, range=(0, 1))
+            # # image_with_mask = transforms.ToPILImage()(image_with_mask.cpu().float())
+            # # plt.subplot(2, 1, 1)
+            # # plt.imshow(image)
+            # # plt.subplot(2, 1, 2)
+            # # plt.imshow(image_with_mask)
+            # # plt.show()
+            # mask = torch.argmax(mask, dim=1).unsqueeze(1)
+            # skeleton = torch.mul(result[0], mask.half())
+            # cm = ScalarMappable(norm=Normalize(0, 20))
+            # skeleton = torch.argmax(skeleton[:, 1:, :, :], dim=1)
+            # skeleton = torch.Tensor(
+            #     cm.to_rgba(np.array(skeleton.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2, 3))
+            # skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
+            # skeleton = transforms.ToPILImage()(skeleton)
+            # skeleton_all = torch.argmax(result[0][:, 1:, :, :], dim=1)
+            # skeleton_all = torch.Tensor(
+            #     cm.to_rgba(np.array(skeleton_all.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2, 3))
+            # skeleton_all = torchvision.utils.make_grid(skeleton_all, normalize=True, range=(0, 1))
+            # skeleton_all = transforms.ToPILImage()(skeleton_all)
+            # keypoints = torch.mul(result[1], mask.half())
+            # cm = ScalarMappable(norm=Normalize(0, 20))
+            # keypoints = torch.argmax(keypoints[:, 1:, :, :], dim=1)
+            # keypoints = torch.Tensor(
+            #     cm.to_rgba(np.array(keypoints.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2, 3))
+            # keypoints = torchvision.utils.make_grid(keypoints, normalize=True, range=(0, 1))
+            # keypoints = transforms.ToPILImage()(keypoints)
+            #
+            # plt.subplot(4, 1, 1)
+            # plt.imshow(image)
+            # plt.subplot(4, 1, 2)
+            # plt.imshow(image_with_mask)
+            # plt.subplot(4, 1, 3)
+            # plt.imshow(keypoints)
+            # plt.subplot(4, 1, 4)
+            # plt.imshow(skeleton)
+            # plt.show()
+            # print('easfeswf')
 
         elif test_mode == 'test':
             image = Image.open('test_img/im1.jpg').resize([256, 256])
             image_normalize = (mytransform(image)).unsqueeze(0).cuda().half()
-            # result = model(image_normalize)
-            # image = torchvision.utils.make_grid(image_normalize, normalize=True, range=(0, 1))
-            # mask = torch.nn.functional.softmax(result[0])
-            # mask = torch.argmax(mask, dim=1).unsqueeze(1)
-            # mask = torchvision.utils.make_grid(mask, normalize=True, range=(0, 1))
-            # cm = ScalarMappable(Normalize(0, 20))
-            # skeleton = torch.nn.functional.softmax(result[1])
-            # skeleton = torch.argmax(skeleton, dim=1)
-            # skeleton = torch.Tensor(
-            #     cm.to_rgba(np.array(skeleton.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2,
-            #                                                                                               3))
-            # skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
-            # keypoints = torch.nn.functional.softmax(result[2])
-            # keypoints = torch.argmax(keypoints[:, :, :, :], dim=1)
-            # keypoints = torch.Tensor(
-            #     cm.to_rgba(np.array(keypoints.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(
-            #         2,
-            #         3))
-            # keypoints = torchvision.utils.make_grid(keypoints, normalize=True, range=(0, 1))
             time_array = np.array([])
             for i in range(100):
                 tic = time.process_time()
                 result = model(image_normalize)
                 tif = time.process_time()
-                time_array = np.append(time_array, tif-tic)
+                time_array = np.append(time_array, tif - tic)
             print('min = {}'.format(time_array.min()))
             print('mean = {}'.format(time_array.mean()))
-            # plt.subplot(2, 2, 1)
-            # plt.imshow(transforms.ToPILImage()(image.cpu().data.float()))
-            # plt.subplot(2, 2, 2)
-            # plt.imshow(transforms.ToPILImage()(mask.cpu().data.float()))
-            # plt.subplot(2, 2, 3)
-            # plt.imshow(transforms.ToPILImage()(skeleton.cpu().data.float()))
-            # plt.subplot(2, 2, 4)
-            # plt.imshow(transforms.ToPILImage()(keypoints.cpu().data.float()))
-            # plt.show()
-            # print('esfesgt')
 
         print('yyy')
 

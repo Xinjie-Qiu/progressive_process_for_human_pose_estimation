@@ -26,11 +26,9 @@ from torch.nn.modules import loss
 from skimage.feature import peak_local_max
 from tensorboardX import SummaryWriter
 import random
-import time
 from torchstat import stat
 
 matplotlib.use('TkAgg')
-
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # The GPU id to use, usually either "0" or "1"
@@ -47,7 +45,7 @@ nOutChannels_0 = 2
 nOutChannels_1 = nSkeleton_MPII + 1
 nOutChannels_2 = nKeypoint_MPII + 1
 epochs = 300
-batch_size = 48
+batch_size = 30
 keypoints = 17
 skeleton = 20
 inputsize = 256
@@ -56,8 +54,8 @@ learning_rate = 1e-4
 threshold = 1
 
 mode = 'test'
-load_model_name = 'train_test'
-save_model_name = 'train_test'
+load_model_name = 'params_1_merge_all_fine_tune'
+save_model_name = 'params_1_merge_all_fine_tune'
 # load_mask_name = 'params_1_mask'
 # save_mask_name = 'params_1_mask'
 
@@ -75,7 +73,7 @@ rootdir = '/data/lsp_dataset/images/'
 retrain = False
 train_mask = False
 usemask = False
-write = False
+write = True
 fine_tune = False
 dataset = 'mpii'
 
@@ -495,6 +493,60 @@ class ASPP_Block(nn.Module):
         return out
 
 
+class hourglass_hourglass(nn.Module):
+    def __init__(self, f):
+        super(hourglass_hourglass, self).__init__()
+        self.f = f
+
+        self.downsample1 = nn.Sequential(
+            nn.MaxPool2d(2, 2),
+            ResidualBlock(f, f))
+        self.downsample2 = nn.Sequential(
+            nn.MaxPool2d(2, 2),
+            ResidualBlock(f, f))
+        self.downsample3 = nn.Sequential(
+            nn.MaxPool2d(2, 2),
+            ResidualBlock(f, f))
+        self.downsample4 = nn.Sequential(
+            nn.MaxPool2d(2, 2),
+            ResidualBlock(f, f))
+
+        self.residual1 = ResidualBlock(f, f)
+        self.residual2 = ResidualBlock(f, f)
+        self.residual3 = ResidualBlock(f, f)
+        self.residual4 = ResidualBlock(f, f)
+        self.residual5 = ResidualBlock(f, f)
+
+        self.upsample1 = ResidualBlock(f, f)
+        self.upsample2 = ResidualBlock(f, f)
+        self.upsample3 = ResidualBlock(f, f)
+        self.upsample4 = ResidualBlock(f, f)
+
+    def forward(self, x):
+        up1 = self.residual1(x)
+        down1 = self.downsample1(x)
+        up2 = self.residual2(down1)
+        down2 = self.downsample2(down1)
+        up3 = self.residual3(down2)
+        down3 = self.downsample3(down2)
+        up4 = self.residual4(down3)
+        down4 = self.downsample4(down3)
+        out = self.residual5(down4)
+        out = self.upsample4(out)
+        out = F.interpolate(out, scale_factor=2)
+        out = out + up4
+        out = self.upsample3(out)
+        out = F.interpolate(out, scale_factor=2)
+        out = out + up3
+        out = self.upsample2(out)
+        out = F.interpolate(out, scale_factor=2)
+        out = out + up2
+        out = self.upsample1(out)
+        out = F.interpolate(out, scale_factor=2)
+        out = out + up1
+        return out
+
+
 class hourglass(nn.Module):
     def __init__(self, f):
         super(hourglass, self).__init__()
@@ -596,6 +648,101 @@ class creatModel(nn.Module):
 
         ll = self.stage3(inter)
         tmpOut = self.stage3_out(ll)
+        out.insert(i, tmpOut)
+
+        return out
+
+
+class creatModel_hourglass(nn.Module):
+    def __init__(self):
+        super(creatModel_hourglass, self).__init__()
+        self.preprocess1 = nn.Sequential(
+            nn.Conv2d(3, 64, 7, 2, 3),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            ResidualBlock(64, 128),
+            nn.MaxPool2d(2, 2),
+            ResidualBlock(128, 128),
+            ResidualBlock(128, nFeats)
+        )
+
+        self.stage1 = nn.Sequential(
+            hourglass_hourglass(nFeats),
+            ResidualBlock(nFeats, nFeats),
+            nn.Conv2d(nFeats, nFeats, 1, 1, 0),
+            nn.BatchNorm2d(nFeats),
+            nn.ReLU()
+        )
+        self.stage1_out = nn.Conv2d(nFeats, 16, 1, 1, 0, bias=False)
+        self.stage1_return = nn.Conv2d(16, nFeats, 1, 1, 0, bias=False)
+        self.stage1_down_feature = nn.Conv2d(nFeats, nFeats, 1, 1, 0, bias=False)
+
+        self.stage2 = nn.Sequential(
+            hourglass_hourglass(nFeats),
+            ResidualBlock(nFeats, nFeats),
+            nn.Conv2d(nFeats, nFeats, 1, 1, 0),
+            nn.BatchNorm2d(nFeats),
+            nn.ReLU()
+        )
+        self.stage2_out = nn.Conv2d(nFeats, 16, 1, 1, 0, bias=False)
+        self.stage2_return = nn.Conv2d(16, nFeats, 1, 1, 0, bias=False)
+        self.stage2_down_feature = nn.Conv2d(nFeats, nFeats, 1, 1, 0, bias=False)
+
+        self.stage3 = nn.Sequential(
+            hourglass_hourglass(nFeats),
+            ResidualBlock(nFeats, nFeats),
+            nn.Conv2d(nFeats, nFeats, 1, 1, 0),
+            nn.BatchNorm2d(nFeats),
+            nn.ReLU()
+        )
+        self.stage3_out = nn.Conv2d(nFeats, 16, 1, 1, 0, bias=False)
+        self.stage3_return = nn.Conv2d(16, nFeats, 1, 1, 0, bias=False)
+        self.stage3_down_feature = nn.Conv2d(nFeats, nFeats, 1, 1, 0, bias=False)
+
+        self.stage4 = nn.Sequential(
+            hourglass_hourglass(nFeats),
+            ResidualBlock(nFeats, nFeats),
+            nn.Conv2d(nFeats, nFeats, 1, 1, 0),
+            nn.BatchNorm2d(nFeats),
+            nn.ReLU()
+        )
+        self.stage4_out = nn.Conv2d(nFeats, 16, 1, 1, 0, bias=False)
+
+    def forward(self, x):
+        inter = self.preprocess1(x)
+        out = []
+
+        i = 0
+
+        ll = self.stage1(inter)
+        tmpOut = self.stage1_out(ll)
+        out.insert(i, tmpOut)
+        tmpOut = self.stage1_return(tmpOut)
+        ll_ = self.stage1_down_feature(ll)
+        inter = tmpOut + inter + ll_
+
+        i = 1
+
+        ll = self.stage2(inter)
+        tmpOut = self.stage2_out(ll)
+        out.insert(i, tmpOut)
+        tmpOut = self.stage2_return(tmpOut)
+        ll_ = self.stage2_down_feature(ll)
+        inter = tmpOut + inter + ll_
+
+        i = 2
+
+        ll = self.stage3(inter)
+        tmpOut = self.stage3_out(ll)
+        out.insert(i, tmpOut)
+        tmpOut = self.stage3_return(tmpOut)
+        ll_ = self.stage3_down_feature(ll)
+        inter = tmpOut + inter + ll_
+
+        i = 3
+
+        ll = self.stage4(inter)
+        tmpOut = self.stage4_out(ll)
         out.insert(i, tmpOut)
 
         return out
@@ -761,12 +908,12 @@ class PCKh(nn.Module):
         super(PCKh, self).__init__()
 
     def forward(self, x, target, rect):
-        accuracy = np.zeros([x.shape[0], 11])
+        accuracy = []
         predicts = []
         labels = []
         for i in range(x.shape[0]):
-            correct = np.zeros([11])
-            total = np.zeros([11])
+            correct = 0
+            total = 0
             predict = np.zeros([x.shape[1], 2])
             label = np.zeros([x.shape[1], 2])
             standard = np.sqrt((rect[i][0] - rect[i][2]) ** 2 + (rect[i][1] - rect[i][3]) ** 2) * 0.6
@@ -776,19 +923,33 @@ class PCKh(nn.Module):
                 except:
                     continue
                 predict_ys, predict_xs = torch.nonzero(x[i, j + 1, :, :] >= torch.max(x[i, j + 1, :, :]))[0]
-                distance = torch.sqrt(
+
+                if torch.sqrt(
                         (torch.pow(label_ys - predict_ys, 2) + torch.pow(label_xs - predict_xs,
-                                                                         2)).float()) / standard
-                for step, k in enumerate(np.arange(0, 0.55, 0.05)):
-                    if distance < k:
-                        correct[step] += 1
-                    total[step] += 1
+                                                                         2)).float()) < standard * 0.5:
+                    correct += 1
+                total += 1
                 predict[j] = [predict_xs, predict_ys]
                 label[j] = [label_xs, label_ys]
-            accuracy[i] = (correct / total)
+            accuracy.append(correct / total)
             predicts.append(predict)
             labels.append(label)
         return accuracy, predicts, labels
+
+
+class testModel(nn.Module):
+    def __init__(self):
+        super(testModel, self).__init__()
+        self.preprocess1 = nn.Sequential(
+            nn.Conv2d(3, 64, 7, 2, 3, bias=False),
+            nn.BatchNorm2d(64),
+            nn.Conv2d(64, 32, 3, 2, 1),
+            nn.BatchNorm2d(32),
+        )
+
+    def forward(self, x):
+        inter = self.preprocess1(x)
+        return inter
 
 
 def main():
@@ -798,11 +959,8 @@ def main():
         # generatemask = generateMask().cuda()
         model = creatModel()
         loss1_background = Costomer_CrossEntropyLoss().cuda()
-        loss1_background_normal = nn.CrossEntropyLoss().cuda()
         loss2_skeleton = Costomer_CrossEntropyLoss().cuda()
-        loss2_skeleton_normal = nn.CrossEntropyLoss().cuda()
         loss3_keypoints = Costomer_CrossEntropyLoss().cuda()
-        loss3_keypoints_normal = nn.CrossEntropyLoss().cuda()
         # pckh = PCKh()
         mytransform = transforms.Compose([
             transforms.ToTensor(),
@@ -872,10 +1030,8 @@ def main():
                 epoch = state['epoch']
 
         while epoch <= epochs:
-            # for i, [x_, y_keypoints, y_skeleton, y_background] in enumerate(imgLoader_train, 0):
             for i, [x_, y_keypoints, y_skeleton, _] in enumerate(imgLoader_train, 0):
                 bx_, by_keypoints, by_skeleton = x_.cuda().half(), y_keypoints.cuda(), y_skeleton.cuda()
-                # bx_, by_keypoints, by_skeleton, by_background = x_.cuda().half(), y_keypoints.cuda(), y_skeleton.cuda(), y_background.cuda()
                 # bx_, by_keypoints, by_skeleton, by_background = x_.cuda(), y_keypoints.cuda(), y_skeleton.cuda(), y_background.cuda()
                 # mask = generatemask(bx_)
                 # mask_interpolate = F.interpolate(mask, scale_factor=4)
@@ -883,10 +1039,9 @@ def main():
                 # image_with_mask = torch.mul(bx_, mask_interpolate.half())
                 result = model(bx_)
                 # losses = loss_background.forward(mask, by_background, (epochs - epoch) / epochs)
-                # loss_1 = loss1_background.forward(result[0], by_background, (epochs - epoch) / epochs) + loss1_background_normal.forward(result[0], by_background)
-                loss_2 = loss2_skeleton.forward(result[1], by_skeleton, (100 - epoch) / 100) + loss2_skeleton_normal.forward(result[1], by_skeleton)
-                loss_3 = loss3_keypoints.forward(result[2], by_keypoints, (100 - epoch) / 100) + loss3_keypoints_normal.forward(result[2], by_keypoints)
-                # losses = loss_1 + loss_2 + loss_3
+                # loss_1 = loss1_background.forward(result[0], by_background, (epochs - epoch) / epochs)
+                loss_2 = loss2_skeleton.forward(result[1], by_skeleton, (100 - epoch) / 100)
+                loss_3 = loss3_keypoints.forward(result[2], by_keypoints, (100 - epoch) / 100)
                 losses = loss_2 + loss_3
                 opt.zero_grad()
                 # mask_opt.zero_grad()
@@ -987,8 +1142,18 @@ def main():
             torch.save(state, save_model_name)
 
     elif mode == 'test':
+        # test_model = testModel()
+        # stat(test_model, (3, 256, 256))
+        # for parameter in test_model.parameters():
+        #     if parameter.requires_grad:
+        #         print(parameter.numel())
         # generatemask = generateMask().cuda().half().eval()
-        model = creatModel().cuda().eval().half()
+        # test_model = testModel()
+        # stat(test_model, (3, 256, 256))
+        model = creatModel()
+        stat(model, (3, 256, 256))
+        model_hourglass = creatModel_hourglass()
+        stat(model_hourglass, (3, 256, 256))
         mytransform = transforms.Compose([
             transforms.ToTensor(),
             # transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
@@ -997,6 +1162,10 @@ def main():
         # generatemask.load_state_dict(state['state_dict'])
         state = torch.load(load_model_name)
         model.load_state_dict(state['state_dict'])
+
+
+        for parameter in model.parameters():
+            print(parameter)
 
         # loss_background = Costomer_CrossEntropyLoss().cuda()
         test_mode = 'mpii'
@@ -1124,26 +1293,15 @@ def main():
             test_set = 'mpii/test.txt'
             pckh = PCKh().cuda()
             imgLoader_eval = data.DataLoader(myImageDataset(test_set, image_dir, mat_dir, mytransform),
-                                             batch_size=16,
-                                             shuffle=False, num_workers=16)
-            accryacy_every = []
+                                             batch_size=8,
+                                             shuffle=True, num_workers=1)
+            accryacy_every = np.array([])
             for i, [x_, y_keypoints, _, rect] in enumerate(imgLoader_eval):
                 bx_ = x_.cuda().half()
                 result = model(bx_)
-            #
+
                 accuracy, pred, label = pckh.forward(nn.functional.softmax(result[2]), y_keypoints, rect)
-                accryacy_every.append(accuracy)
-            accryacy_every = np.concatenate(accryacy_every, axis=0)
-            accuracy_mean = accryacy_every.mean(axis=0)
-
-
-            plt.plot(np.arange(0, 0.55, 0.05), accuracy_mean * 100)
-            plt.xticks(np.arange(0, 0.55, 0.05))
-            plt.yticks(np.arange(0, 101, 10))
-            plt.xlabel('Normalized distance')
-            plt.ylabel('Detection rate, %')
-            plt.show()
-            print('sefehsop')
+                accryacy_every = np.append(accryacy_every, accuracy, 0)
                 #
                 # print('esf')
                 # results = torch.argmax(result[1], dim=1)
@@ -1166,41 +1324,9 @@ def main():
                 # # #     plt.imshow(transforms.ToPILImage()(image_with_mask[i].cpu().float()))
                 # # #     plt.show()
                 # # #     print('esfe')
-                # if accuracy.max() > 0.9:
-                #     image = torchvision.utils.make_grid(bx_, normalize=True, range=(0, 1))
-                #     mask = torch.nn.functional.softmax(result[0])
-                #     mask = torch.argmax(mask, dim=1).unsqueeze(1)
-                #     mask = torchvision.utils.make_grid(mask, normalize=True, range=(0, 1))
-                #     # object = torch.argmax(result, dim=1).unsqueeze(1)
-                #     # image_with_mask = torchvision.utils.make_grid(image_with_mask, normalize=True, range=(0, 1))
-                #     # mask = torch.argmax(mask, dim=1).unsqueeze(1)
-                #     cm = ScalarMappable(Normalize(0, 20))
-                #     skeleton = torch.nn.functional.softmax(result[1])
-                #     skeleton = torch.argmax(skeleton[:, 1:, :, :], dim=1)
-                #     skeleton = torch.Tensor(
-                #         cm.to_rgba(np.array(skeleton.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2,
-                #                                                                                                   3))
-                #     skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
-                #     keypoints = torch.nn.functional.softmax(result[2])
-                #     keypoints = torch.argmax(keypoints[:, 1:, :, :], dim=1)
-                #     keypoints = torch.Tensor(
-                #         cm.to_rgba(np.array(keypoints.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(
-                #             2,
-                #             3))
-                #     keypoints = torchvision.utils.make_grid(keypoints, normalize=True, range=(0, 1))
-                #     plt.subplot(2, 2, 1)
-                #     plt.imshow(transforms.ToPILImage()(image.cpu().float()))
-                #     plt.subplot(2, 2, 2)
-                #     plt.imshow(transforms.ToPILImage()(mask.cpu().float()))
-                #     plt.subplot(2, 2, 3)
-                #     plt.imshow(transforms.ToPILImage()(skeleton.cpu().float()))
-                #     plt.subplot(2, 2, 4)
-                #     plt.imshow(transforms.ToPILImage()(keypoints.cpu().float()))
-                #     plt.show()
-                #     print('esf')
                 # for i in range(len(pred)):
                 #     image = transforms.ToPILImage()(x_[i])
-                #     image = image.resize([64, 64])
+                #     image = image.resize([rect[i][4], rect[i][5]])
                 #     label_image = Image.fromarray(np.zeros_like(np.array(image)))
                 #     image_draw = ImageDraw.Draw(image)
                 #     label_draw = ImageDraw.Draw(label_image)
@@ -1286,45 +1412,62 @@ def main():
                 # print('easfeswf')
 
         elif test_mode == 'test':
-            image = Image.open('test_img/im1.jpg').resize([256, 256])
+            image = Image.open('test_img/im6.png').resize([256, 256])
             image_normalize = (mytransform(image)).unsqueeze(0).cuda().half()
-            # result = model(image_normalize)
-            # image = torchvision.utils.make_grid(image_normalize, normalize=True, range=(0, 1))
-            # mask = torch.nn.functional.softmax(result[0])
-            # mask = torch.argmax(mask, dim=1).unsqueeze(1)
-            # mask = torchvision.utils.make_grid(mask, normalize=True, range=(0, 1))
-            # cm = ScalarMappable(Normalize(0, 20))
-            # skeleton = torch.nn.functional.softmax(result[1])
-            # skeleton = torch.argmax(skeleton, dim=1)
-            # skeleton = torch.Tensor(
-            #     cm.to_rgba(np.array(skeleton.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2,
-            #                                                                                               3))
-            # skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
-            # keypoints = torch.nn.functional.softmax(result[2])
-            # keypoints = torch.argmax(keypoints[:, :, :, :], dim=1)
-            # keypoints = torch.Tensor(
-            #     cm.to_rgba(np.array(keypoints.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(
-            #         2,
-            #         3))
-            # keypoints = torchvision.utils.make_grid(keypoints, normalize=True, range=(0, 1))
-            time_array = np.array([])
-            for i in range(100):
-                tic = time.process_time()
-                result = model(image_normalize)
-                tif = time.process_time()
-                time_array = np.append(time_array, tif-tic)
-            print('min = {}'.format(time_array.min()))
-            print('mean = {}'.format(time_array.mean()))
-            # plt.subplot(2, 2, 1)
-            # plt.imshow(transforms.ToPILImage()(image.cpu().data.float()))
-            # plt.subplot(2, 2, 2)
-            # plt.imshow(transforms.ToPILImage()(mask.cpu().data.float()))
-            # plt.subplot(2, 2, 3)
-            # plt.imshow(transforms.ToPILImage()(skeleton.cpu().data.float()))
-            # plt.subplot(2, 2, 4)
-            # plt.imshow(transforms.ToPILImage()(keypoints.cpu().data.float()))
-            # plt.show()
-            # print('esfesgt')
+            mask = generatemask.forward(image_normalize)
+            mask_interpolate = F.interpolate(mask, scale_factor=4)
+            mask_interpolate = torch.argmax(mask_interpolate, dim=1).unsqueeze(1)
+            image_with_mask = torch.mul(image_normalize, mask_interpolate.half())
+            result = model(image_with_mask)
+            results = mask.cpu().float().data.numpy()
+            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)  # 调整子图间距
+            # draw = ImageDraw.Draw(image)
+            plt.subplot(1, 2, 1)
+            plt.imshow(image)
+            plt.subplot(1, 2, 2)
+            results = np.argmax(results[0, :, :, :], axis=0)
+            plt.imshow(results)
+            plt.show()
+            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)
+            results = result[0].cpu().float().data.numpy()
+            for i in range(nOutChannels_1):
+                plt.subplot(3, int(nOutChannels_1 / 2), i + 1)
+                result_print = results[0, i, :, :]
+                plt.imshow(result_print)
+            plt.subplot(3, 1, 3)
+            plt.imshow(image)
+            plt.show()
+
+            mask = torch.argmax(mask, dim=1).unsqueeze(1)
+            skeleton = torch.mul(result[0], mask.half())
+            cm = ScalarMappable(norm=Normalize(0, 20))
+            skeleton = torch.argmax(skeleton[:, 1:, :, :], dim=1)
+            skeleton = torch.Tensor(
+                cm.to_rgba(np.array(skeleton.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2, 3))
+            skeleton = torchvision.utils.make_grid(skeleton, normalize=True, range=(0, 1))
+            skeleton = transforms.ToPILImage()(skeleton)
+            plt.imshow(skeleton)
+            plt.show()
+            plt.subplots_adjust(wspace=0.1, hspace=0, left=0.03, bottom=0.03, right=0.97, top=1)
+            results = result[1].cpu().float().data.numpy()
+            for i in range(nOutChannels_2):
+                plt.subplot(3, 9, i + 1)
+                # result_print = np.maximum(np.multiply(results[0, i, :, :], mask), 0)
+                result_print = results[0, i, :, :]
+                plt.imshow(result_print)
+            plt.subplot(3, 1, 3)
+            plt.imshow(image)
+            plt.show()
+            keypoints = torch.mul(result[1], mask.half())
+            cm = ScalarMappable(norm=Normalize(0, 20))
+            keypoints = torch.argmax(keypoints[:, 1:, :, :], dim=1)
+            keypoints = torch.Tensor(
+                cm.to_rgba(np.array(keypoints.unsqueeze(1).cpu()))[:, 0, :, :, :3].swapaxes(3, 1).swapaxes(2, 3))
+            keypoints = torchvision.utils.make_grid(keypoints, normalize=True, range=(0, 1))
+            keypoints = transforms.ToPILImage()(keypoints)
+            plt.imshow(keypoints)
+            plt.show(keypoints)
+            print('esfesgt')
 
         print('yyy')
 
